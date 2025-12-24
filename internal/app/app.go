@@ -8,11 +8,13 @@ import (
 
 	"github.com/memkit/repodex/internal/cli"
 	"github.com/memkit/repodex/internal/config"
+	"github.com/memkit/repodex/internal/fetch"
 	"github.com/memkit/repodex/internal/hash"
 	"github.com/memkit/repodex/internal/ignore"
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/scan"
+	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/serve"
 	"github.com/memkit/repodex/internal/store"
 )
@@ -39,6 +41,30 @@ func Run(args []string) int {
 	switch cmd.Action {
 	case "init":
 		if err := runInit(".", cmd.Force); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "status":
+		if err := runStatus(".", cmd.JSON); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "sync":
+		if err := runIndexSync("."); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "search":
+		if err := runSearch(".", cmd.Q, cmd.TopK); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	case "fetch":
+		if err := runFetch(".", cmd.IDs, cmd.MaxLines); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -280,4 +306,28 @@ func runServeStdio(root string) error {
 		return computeStatus(root)
 	}
 	return serve.ServeStdio(root, statusFn, syncFn)
+}
+
+func runSearch(root string, q string, topK int) error {
+	if q == "" {
+		return fmt.Errorf("query cannot be empty")
+	}
+	results, err := search.Search(root, q, search.Options{TopK: topK})
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(os.Stdout)
+	return enc.Encode(results)
+}
+
+func runFetch(root string, ids []uint32, maxLines int) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("at least one id is required")
+	}
+	results, err := fetch.Fetch(root, ids, maxLines)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(os.Stdout)
+	return enc.Encode(results)
 }
