@@ -27,7 +27,7 @@ func TestBuildNormalizesCRLFLineNumbers(t *testing.T) {
 		Path:    "sample.ts",
 		Content: []byte(raw),
 		MTime:   1,
-		Size:    int64(len(normalized)),
+		Size:    int64(len(raw)),
 		Hash64:  0,
 	}}
 	plugin := ts.TSPlugin{}
