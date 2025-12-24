@@ -86,15 +86,15 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// Load reads a Config from disk.
-func Load(path string) (Config, error) {
+// Load reads a Config from disk and returns the parsed config along with the raw bytes.
+func Load(path string) (Config, []byte, error) {
 	var cfg Config
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return cfg, err
+		return cfg, nil, err
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, err
+		return cfg, nil, err
 	}
-	return cfg, nil
+	return cfg, data, nil
 }

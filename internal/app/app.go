@@ -100,7 +100,8 @@ func runInit(root string, force bool) error {
 }
 
 func runIndexSync(root string) error {
-	cfg, err := config.Load(store.ConfigPath(root))
+	cfgPath := store.ConfigPath(root)
+	cfg, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
 		return err
 	}
@@ -131,10 +132,6 @@ func runIndexSync(root string) error {
 		return err
 	}
 
-	cfgBytes, err := os.ReadFile(store.ConfigPath(root))
-	if err != nil {
-		return err
-	}
 	cfgHash := hash.Sum64(cfgBytes)
 	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
@@ -146,6 +143,7 @@ func runIndexSync(root string) error {
 func runStatus(root string, jsonOut bool) error {
 	metaPath := store.MetaPath(root)
 	filesPath := store.FilesPath(root)
+	cfgPath := store.ConfigPath(root)
 
 	metaExists, err := fileExistsOk(metaPath)
 	if err != nil {
@@ -173,11 +171,7 @@ func runStatus(root string, jsonOut bool) error {
 	if err != nil {
 		return err
 	}
-	cfgBytes, err := os.ReadFile(store.ConfigPath(root))
-	if err != nil {
-		return err
-	}
-	cfg, err := config.Load(store.ConfigPath(root))
+	cfg, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
 		return err
 	}
