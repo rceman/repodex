@@ -85,7 +85,7 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 		case "search":
 			if strings.TrimSpace(req.Q) == "" {
 				resp.OK = false
-				resp.Op = ""
+				resp.Op = "search"
 				resp.Error = "invalid search request: q is required"
 				break
 			}
@@ -105,13 +105,13 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 		case "fetch":
 			if len(req.IDs) == 0 {
 				resp.OK = false
-				resp.Op = ""
+				resp.Op = "fetch"
 				resp.Error = "invalid fetch request: ids are required"
 				break
 			}
 			if len(req.IDs) > 5 {
 				resp.OK = false
-				resp.Op = ""
+				resp.Op = "fetch"
 				resp.Error = "invalid fetch request: maximum 5 ids allowed"
 				break
 			}

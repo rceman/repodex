@@ -286,8 +286,8 @@ func TestServeStdioValidationSearch(t *testing.T) {
 	if resp.resp.OK {
 		t.Fatalf("empty search should not be OK: %s", resp.raw)
 	}
-	if resp.resp.Op != "" {
-		t.Fatalf("empty search should clear op, got %q", resp.resp.Op)
+	if resp.resp.Op != "search" {
+		t.Fatalf("empty search should keep op, got %q", resp.resp.Op)
 	}
 	if resp.resp.Error != "invalid search request: q is required" {
 		t.Fatalf("unexpected error: %s", resp.resp.Error)
@@ -300,8 +300,8 @@ func TestServeStdioValidationFetch(t *testing.T) {
 		if resp.resp.OK {
 			t.Fatalf("missing ids should not be OK: %s", resp.raw)
 		}
-		if resp.resp.Op != "" {
-			t.Fatalf("missing ids should clear op, got %q", resp.resp.Op)
+		if resp.resp.Op != "fetch" {
+			t.Fatalf("missing ids should keep op, got %q", resp.resp.Op)
 		}
 		if resp.resp.Error != "invalid fetch request: ids are required" {
 			t.Fatalf("unexpected error: %s", resp.resp.Error)
@@ -312,8 +312,8 @@ func TestServeStdioValidationFetch(t *testing.T) {
 		if resp.resp.OK {
 			t.Fatalf("too many ids should not be OK: %s", resp.raw)
 		}
-		if resp.resp.Op != "" {
-			t.Fatalf("too many ids should clear op, got %q", resp.resp.Op)
+		if resp.resp.Op != "fetch" {
+			t.Fatalf("too many ids should keep op, got %q", resp.resp.Op)
 		}
 		if resp.resp.Error != "invalid fetch request: maximum 5 ids allowed" {
 			t.Fatalf("unexpected error: %s", resp.resp.Error)
