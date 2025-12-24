@@ -66,6 +66,8 @@ func Run(args []string) int {
 			}
 			return 0
 		}
+		fmt.Fprintln(os.Stderr, "serve supports --stdio only")
+		return 1
 	}
 	return 1
 }

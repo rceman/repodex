@@ -57,3 +57,85 @@ func TestFetchRespectsMaxLines(t *testing.T) {
 		t.Fatalf("unexpected line formatting: first=%q last=%q", got.Lines[0], got.Lines[9])
 	}
 }
+
+func TestFetchEmptyFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+		t.Fatalf("config save failed: %v", err)
+	}
+
+	filePath := filepath.Join(root, "empty.ts")
+	if err := os.WriteFile(filePath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	files := []index.FileEntry{{FileID: 1, Path: "empty.ts"}}
+	chunks := []index.ChunkEntry{
+		{ChunkID: 1, FileID: 1, Path: "empty.ts", StartLine: 1, EndLine: 5, Snippet: "empty"},
+	}
+	if err := index.Serialize(root, files, chunks, map[string][]uint32{}); err != nil {
+		t.Fatalf("serialize failed: %v", err)
+	}
+
+	results, err := Fetch(root, []uint32{1}, 10)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(results))
+	}
+	got := results[0]
+	if got.ReturnedFrom != 0 || got.ReturnedTo != 0 {
+		t.Fatalf("expected zero range for empty file, got %d-%d", got.ReturnedFrom, got.ReturnedTo)
+	}
+	if len(got.Lines) != 0 {
+		t.Fatalf("expected no lines, got %d", len(got.Lines))
+	}
+}
+
+func TestFetchTrailingNewline(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+		t.Fatalf("config save failed: %v", err)
+	}
+
+	content := "alpha\nbeta\ngamma\n"
+	filePath := filepath.Join(root, "with_newline.ts")
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	files := []index.FileEntry{{FileID: 1, Path: "with_newline.ts"}}
+	chunks := []index.ChunkEntry{
+		{ChunkID: 1, FileID: 1, Path: "with_newline.ts", StartLine: 0, EndLine: 10, Snippet: "with newline"},
+	}
+	if err := index.Serialize(root, files, chunks, map[string][]uint32{}); err != nil {
+		t.Fatalf("serialize failed: %v", err)
+	}
+
+	results, err := Fetch(root, []uint32{1}, 120)
+	if err != nil {
+		t.Fatalf("fetch failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(results))
+	}
+	got := results[0]
+	if got.ReturnedFrom != 1 || got.ReturnedTo != 3 {
+		t.Fatalf("unexpected returned range %d-%d", got.ReturnedFrom, got.ReturnedTo)
+	}
+	if len(got.Lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d", len(got.Lines))
+	}
+	if got.Lines[0] != "1| alpha" || got.Lines[2] != "3| gamma" {
+		t.Fatalf("unexpected line formatting with trailing newline: first=%q last=%q", got.Lines[0], got.Lines[2])
+	}
+}
