@@ -307,7 +307,7 @@ func TestServeStdioValidationFetch(t *testing.T) {
 			t.Fatalf("unexpected error: %s", resp.resp.Error)
 		}
 	})
-	t.Run("rejects extra ids", func(t *testing.T) {
+	t.Run("trims extra ids", func(t *testing.T) {
 		root := t.TempDir()
 		buildTestIndex(t, root)
 
@@ -334,14 +334,20 @@ func TestServeStdioValidationFetch(t *testing.T) {
 		}
 		payload := fmt.Sprintf(`{"op":"fetch","ids":%s}`, string(idsJSON)) + "\n"
 		resp := runValidationRequest(t, root, payload)
-		if resp.resp.OK {
-			t.Fatalf("too many ids should not be OK: %s", resp.raw)
+		if !resp.resp.OK {
+			t.Fatalf("trimmed ids should be OK: %s", resp.raw)
 		}
 		if resp.resp.Op != "fetch" {
 			t.Fatalf("expected fetch op, got %q", resp.resp.Op)
 		}
-		if resp.resp.Error != "invalid fetch request: too many ids (max 5)" {
-			t.Fatalf("unexpected error: %s", resp.resp.Error)
+		results := parseFetchResults(t, resp.resp.Data)
+		if len(results) != 5 {
+			t.Fatalf("expected 5 fetch results, got %d", len(results))
+		}
+		for i, res := range results {
+			if res.ChunkID != ids[i] {
+				t.Fatalf("result %d chunk id mismatch: got %d, want %d", i, res.ChunkID, ids[i])
+			}
 		}
 	})
 }
