@@ -107,10 +107,9 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				resp.Error = "invalid fetch request: ids are required"
 				break
 			}
-			if len(req.IDs) > 5 {
-				resp.OK = false
-				resp.Error = "invalid fetch request: too many ids (max 5)"
-				break
+			ids := req.IDs
+			if len(ids) > 5 {
+				ids = ids[:5]
 			}
 			if err := cache.Load(root); err != nil {
 				resp.OK = false
@@ -118,7 +117,7 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				break
 			}
 			_, _, _, _, chunkMap, _, _ := cache.Get()
-			results, err := fetch.FetchWithChunkMap(root, chunkMap, req.IDs, req.MaxLines)
+			results, err := fetch.FetchWithChunkMap(root, chunkMap, ids, req.MaxLines)
 			if err != nil {
 				resp.OK = false
 				resp.Error = err.Error()

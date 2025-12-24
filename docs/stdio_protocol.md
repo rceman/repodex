@@ -31,6 +31,7 @@ Repodex `serve --stdio` exchanges one JSON object per line. Each request must fi
 - Request fields:
   - `ids` (array of uint32, required): chunk ids to fetch; only the first 5 are processed.
   - `max_lines` (int, optional): defaults to 120 and capped at 120.
+- Notes: requests may include more than 5 ids; any beyond the first 5 are ignored.
 - Response: `{ "ok": true, "op": "fetch", "data": [ { "chunk_id": 1, "lines": ["10| const x = 1"] } ] }`
 
 ## Error responses
