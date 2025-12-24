@@ -37,3 +37,39 @@ func TestRunInitForceOverwritesRepodexDir(t *testing.T) {
 		}
 	}
 }
+
+func TestComputeStatusMissingIndexArtifact(t *testing.T) {
+	root := t.TempDir()
+	repodexDir := filepath.Join(root, ".repodex")
+	if err := os.Mkdir(repodexDir, 0o755); err != nil {
+		t.Fatalf("failed to create repodex dir: %v", err)
+	}
+
+	// Create only the files that should exist; omit chunks.dat to simulate a partial index.
+	touch := []string{
+		filepath.Join(repodexDir, "meta.json"),
+		filepath.Join(repodexDir, "files.dat"),
+		filepath.Join(repodexDir, "terms.dat"),
+		filepath.Join(repodexDir, "postings.dat"),
+	}
+	for _, path := range touch {
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			t.Fatalf("failed to create %s: %v", path, err)
+		}
+	}
+
+	resp, err := computeStatus(root)
+	if err != nil {
+		t.Fatalf("computeStatus returned error: %v", err)
+	}
+
+	if resp.Indexed {
+		t.Fatalf("expected Indexed to be false when an index artifact is missing")
+	}
+	if !resp.Dirty {
+		t.Fatalf("expected Dirty to be true when an index artifact is missing")
+	}
+	if resp.ChangedFiles != 0 {
+		t.Fatalf("expected ChangedFiles to be 0 for missing artifact, got %d", resp.ChangedFiles)
+	}
+}
