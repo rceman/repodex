@@ -31,14 +31,14 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
 ### Commands
 - `repodex init`
   - Creates `.repodex/` and writes default config + default ignore.
-- `repodex status`
-  - Reports whether the index exists and whether it is "dirty".
+- `repodex status [--json]`
+  - Reports whether the index exists and whether it is "dirty". `--json` outputs a machine-readable response.
 - `repodex sync`
   - Rebuilds the entire index (prototype-friendly full rebuild).
-- `repodex search --q "..."`
+- `repodex search --q "..." [--top_k N]`
   - Runs candidates-only ranked search.
-- `repodex fetch --ids [..] --max-lines N`
-  - Fetches bounded chunk text.
+- `repodex fetch --ids [..] [--max_lines N]`
+  - Fetches bounded chunk text (ids capped to 5, max_lines default and capped at 120).
 - `repodex serve --stdio`
   - Runs JSONL request/response protocol on stdin/stdout.
 

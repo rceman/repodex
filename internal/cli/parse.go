@@ -1,6 +1,10 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // Command represents parsed CLI input.
 type Command struct {
@@ -9,6 +13,10 @@ type Command struct {
 	JSON       bool
 	Force      bool
 	Stdio      bool
+	Q          string
+	TopK       int
+	IDs        []uint32
+	MaxLines   int
 }
 
 // Parse converts argv into a Command description.
@@ -26,6 +34,96 @@ func Parse(args []string) (Command, error) {
 			} else {
 				return Command{}, fmt.Errorf("unknown flag %s", a)
 			}
+		}
+		return c, nil
+	case "status":
+		c := Command{Action: "status"}
+		for _, a := range args[1:] {
+			if a == "--json" {
+				c.JSON = true
+			} else {
+				return Command{}, fmt.Errorf("unknown flag %s", a)
+			}
+		}
+		return c, nil
+	case "sync":
+		if len(args) > 1 {
+			return Command{}, fmt.Errorf("unknown flag %s", args[1])
+		}
+		return Command{Action: "sync"}, nil
+	case "search":
+		c := Command{Action: "search"}
+		i := 1
+		for i < len(args) {
+			switch args[i] {
+			case "--q":
+				if i+1 >= len(args) {
+					return Command{}, fmt.Errorf("missing value for --q")
+				}
+				c.Q = args[i+1]
+				i += 2
+			case "--top_k":
+				if i+1 >= len(args) {
+					return Command{}, fmt.Errorf("missing value for --top_k")
+				}
+				val, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					return Command{}, fmt.Errorf("invalid top_k %s", args[i+1])
+				}
+				if val < 0 {
+					return Command{}, fmt.Errorf("top_k must be non-negative")
+				}
+				c.TopK = val
+				i += 2
+			default:
+				return Command{}, fmt.Errorf("unknown flag %s", args[i])
+			}
+		}
+		if c.Q == "" {
+			return Command{}, fmt.Errorf("missing required --q")
+		}
+		return c, nil
+	case "fetch":
+		c := Command{Action: "fetch"}
+		i := 1
+		for i < len(args) {
+			switch args[i] {
+			case "--ids":
+				if i+1 >= len(args) {
+					return Command{}, fmt.Errorf("missing value for --ids")
+				}
+				raw := strings.Split(args[i+1], ",")
+				for _, r := range raw {
+					r = strings.TrimSpace(r)
+					if r == "" {
+						continue
+					}
+					id, err := strconv.ParseUint(r, 10, 32)
+					if err != nil {
+						return Command{}, fmt.Errorf("invalid id %s", r)
+					}
+					c.IDs = append(c.IDs, uint32(id))
+				}
+				i += 2
+			case "--max_lines":
+				if i+1 >= len(args) {
+					return Command{}, fmt.Errorf("missing value for --max_lines")
+				}
+				val, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					return Command{}, fmt.Errorf("invalid max_lines %s", args[i+1])
+				}
+				if val < 0 {
+					return Command{}, fmt.Errorf("max_lines must be non-negative")
+				}
+				c.MaxLines = val
+				i += 2
+			default:
+				return Command{}, fmt.Errorf("unknown flag %s", args[i])
+			}
+		}
+		if len(c.IDs) == 0 {
+			return Command{}, fmt.Errorf("missing required --ids")
 		}
 		return c, nil
 	case "index":
