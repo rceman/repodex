@@ -57,8 +57,6 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
   - max file size cap (from config)
 - Safety hardening:
   - Skip symlinks during scanning (do not follow) so scanning cannot traverse outside root via symlinks.
-- Indexed paths:
-  - All paths stored in the index are relative to `root` and normalized with `/`.
 
 ### 3.3 Line ending normalization (important for stable line numbering)
 - When reading source files for indexing and chunking:
@@ -110,8 +108,7 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 ### Query tokenization
 - Tokenize the query using the same TS plugin tokenizer rules as indexing:
   - Reuse the plugin tokenizer on the query string (same token rules and stopwords).
-- Token handling for scoring:
-  - Deduplicate tokens to unique terms before candidate collection and scoring.
+  - Deduplicate tokens into unique terms before candidate collection and scoring.
 
 ### Candidate collection
 - For each unique query token:
@@ -127,7 +124,8 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 
 ### Ranking and caps
 - Sort descending by score.
-- Enforce `max_per_file = 2` (hard internal cap).
+- Enforce `max_per_file = 2` as a hard internal cap.
+  - This is not configurable via stdio or CLI for the prototype.
 - Return `top_k` results:
   - default 20
   - maximum 20
@@ -153,7 +151,8 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 
 ### Output bounding rule
 - If `(end_line - start_line + 1) > max_lines`:
-  - return the first `max_lines` lines of the chunk range (fixed and deterministic)
+  - return the first `max_lines` lines of the chunk range (fixed and deterministic rule)
+  - no centered or adaptive cutting for now
 
 ### Line ending normalization
 - Treat CRLF and CR as LF for consistent numbering, same as indexing.
@@ -182,6 +181,12 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 - `search`
 - `fetch`
 
+### Limits (enforced)
+- MaxRequestBytes: 1 MiB per request line.
+- search: `top_k` default 20, max 20.
+- fetch: `ids` processed max 5.
+- fetch: `max_lines` default 120, max 120.
+
 ### Robustness requirements
 The server must not exit on:
 - invalid JSON
@@ -193,7 +198,7 @@ Instead it must emit an error response and continue reading subsequent lines.
 
 ### Request size limit
 - Do not rely on bufio.Scanner default token limits.
-- Enforce a per-line MaxRequestBytes (for example 1 MiB).
+- Enforce a per-line MaxRequestBytes (1 MiB).
 - If a line exceeds the limit:
   - emit an error response with `"request too large"`
   - discard until newline
@@ -202,7 +207,10 @@ Instead it must emit an error response and continue reading subsequent lines.
 ### Error response semantics
 - For errors that cannot be associated with a supported operation, respond with:
   - `{ "ok": false, "op": "", "error": "..." }`
-- This includes invalid JSON, oversized request lines, and unknown operations.
+- This includes:
+  - invalid JSON
+  - request too large
+  - unknown op
 - For success:
   - `{ "ok": true, "op": "<op>", "data": <payload> }`
 
