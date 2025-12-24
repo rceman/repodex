@@ -85,7 +85,29 @@ func createIndex(t *testing.T, root string, files []index.FileEntry, chunks []in
 	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	cfg := config.DefaultConfig()
+	cfg := config.Config{
+		IndexVersion: 1,
+		ProjectType:  "ts",
+		IncludeExt:   []string{".ts", ".tsx"},
+		ExcludeDirs:  []string{"node_modules", "dist", "build", ".next", "coverage", ".git", "out"},
+		Chunk: config.ChunkingConfig{
+			MaxLines:      200,
+			OverlapLines:  20,
+			MinChunkLines: 20,
+		},
+		Token: config.TokenizationConfig{
+			MinTokenLen:            3,
+			MaxTokenLen:            64,
+			DropHexLen:             16,
+			AllowShortTokens:       []string{"api", "jwt", "url", "ui", "css", "tsx", "jsx", "dom", "id"},
+			StopWords:              []string{},
+			TokenizeStringLiterals: true,
+			MaxFileBytesCode:       2 * 1024 * 1024,
+		},
+		Limits: config.LimitsConfig{
+			MaxSnippetBytes: 800,
+		},
+	}
 	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("config save failed: %v", err)
 	}

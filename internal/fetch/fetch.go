@@ -56,18 +56,44 @@ func Fetch(root string, ids []uint32, maxLines int) ([]ChunkText, error) {
 		if err != nil {
 			return nil, fmt.Errorf("chunk %d path %s: %w", id, ch.Path, err)
 		}
-		lines := strings.Split(string(data), "\n")
+
+		text := string(data)
+		text = strings.TrimRight(text, "\n")
+
+		var lines []string
+		if text != "" {
+			lines = strings.Split(text, "\n")
+		}
+
+		if len(lines) == 0 {
+			results = append(results, ChunkText{
+				ChunkID:      ch.ChunkID,
+				Path:         ch.Path,
+				StartLine:    ch.StartLine,
+				EndLine:      ch.EndLine,
+				ReturnedFrom: 0,
+				ReturnedTo:   0,
+				Lines:        []string{},
+			})
+			continue
+		}
+
 		start := int(ch.StartLine)
-		end := int(ch.EndLine)
 		if start < 1 {
 			start = 1
+		}
+		if start > len(lines) {
+			start = len(lines)
+		}
+
+		end := int(ch.EndLine)
+		if end < start {
+			end = start
 		}
 		if end > len(lines) {
 			end = len(lines)
 		}
-		if start > end {
-			start = end
-		}
+
 		returnedTo := end
 		if (end - start + 1) > maxLines {
 			returnedTo = start + maxLines - 1
@@ -78,10 +104,7 @@ func Fetch(root string, ids []uint32, maxLines int) ([]ChunkText, error) {
 
 		var formatted []string
 		for i := start; i <= returnedTo; i++ {
-			lineText := ""
-			if i-1 < len(lines) {
-				lineText = lines[i-1]
-			}
+			lineText := lines[i-1]
 			formatted = append(formatted, fmt.Sprintf("%d| %s", i, lineText))
 		}
 

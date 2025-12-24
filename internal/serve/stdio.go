@@ -37,7 +37,7 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 		line := scanner.Bytes()
 		var req Request
 		if err := json.Unmarshal(line, &req); err != nil {
-			_ = encoder.Encode(Response{OK: false, Error: fmt.Sprintf("invalid request: %v", err)})
+			_ = encoder.Encode(Response{OK: false, Op: "", Error: fmt.Sprintf("invalid request: %v", err)})
 			continue
 		}
 		resp := Response{OK: true, Op: req.Op}
