@@ -85,7 +85,6 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 		case "search":
 			if strings.TrimSpace(req.Q) == "" {
 				resp.OK = false
-				resp.Op = ""
 				resp.Error = "invalid search request: q is required"
 				break
 			}
@@ -105,12 +104,13 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 		case "fetch":
 			if len(req.IDs) == 0 {
 				resp.OK = false
-				resp.Op = ""
 				resp.Error = "invalid fetch request: ids are required"
 				break
 			}
 			if len(req.IDs) > 5 {
-				req.IDs = req.IDs[:5]
+				resp.OK = false
+				resp.Error = "invalid fetch request: too many ids (max 5)"
+				break
 			}
 			if err := cache.Load(root); err != nil {
 				resp.OK = false

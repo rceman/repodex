@@ -286,8 +286,8 @@ func TestServeStdioValidationSearch(t *testing.T) {
 	if resp.resp.OK {
 		t.Fatalf("empty search should not be OK: %s", resp.raw)
 	}
-	if resp.resp.Op != "" {
-		t.Fatalf("empty search should clear op, got %q", resp.resp.Op)
+	if resp.resp.Op != "search" {
+		t.Fatalf("empty search should keep op search, got %q", resp.resp.Op)
 	}
 	if resp.resp.Error != "invalid search request: q is required" {
 		t.Fatalf("unexpected error: %s", resp.resp.Error)
@@ -300,14 +300,14 @@ func TestServeStdioValidationFetch(t *testing.T) {
 		if resp.resp.OK {
 			t.Fatalf("missing ids should not be OK: %s", resp.raw)
 		}
-		if resp.resp.Op != "" {
-			t.Fatalf("missing ids should clear op, got %q", resp.resp.Op)
+		if resp.resp.Op != "fetch" {
+			t.Fatalf("missing ids should keep op fetch, got %q", resp.resp.Op)
 		}
 		if resp.resp.Error != "invalid fetch request: ids are required" {
 			t.Fatalf("unexpected error: %s", resp.resp.Error)
 		}
 	})
-	t.Run("truncates extra ids", func(t *testing.T) {
+	t.Run("rejects extra ids", func(t *testing.T) {
 		root := t.TempDir()
 		buildTestIndex(t, root)
 
@@ -334,20 +334,14 @@ func TestServeStdioValidationFetch(t *testing.T) {
 		}
 		payload := fmt.Sprintf(`{"op":"fetch","ids":%s}`, string(idsJSON)) + "\n"
 		resp := runValidationRequest(t, root, payload)
-		if !resp.resp.OK {
-			t.Fatalf("too many ids should be OK: %s", resp.raw)
+		if resp.resp.OK {
+			t.Fatalf("too many ids should not be OK: %s", resp.raw)
 		}
 		if resp.resp.Op != "fetch" {
 			t.Fatalf("expected fetch op, got %q", resp.resp.Op)
 		}
-		results := parseFetchResults(t, resp.resp.Data)
-		if len(results) != 5 {
-			t.Fatalf("expected 5 fetch results, got %d", len(results))
-		}
-		for i, fetched := range results {
-			if fetched.ChunkID != ids[i] {
-				t.Fatalf("result %d chunk id mismatch: got %d want %d", i, fetched.ChunkID, ids[i])
-			}
+		if resp.resp.Error != "invalid fetch request: too many ids (max 5)" {
+			t.Fatalf("unexpected error: %s", resp.resp.Error)
 		}
 	})
 }
