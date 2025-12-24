@@ -57,6 +57,8 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
   - max file size cap (from config)
 - Safety hardening:
   - Skip symlinks during scanning (do not follow) so scanning cannot traverse outside root via symlinks.
+- Indexed paths:
+  - All paths stored in the index are relative to `root` and normalized with `/`.
 
 ### 3.3 Line ending normalization (important for stable line numbering)
 - When reading source files for indexing and chunking:
@@ -108,6 +110,8 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 ### Query tokenization
 - Tokenize the query using the same TS plugin tokenizer rules as indexing:
   - Reuse the plugin tokenizer on the query string (same token rules and stopwords).
+- Token handling for scoring:
+  - Deduplicate tokens to unique terms before candidate collection and scoring.
 
 ### Candidate collection
 - For each unique query token:
@@ -198,6 +202,7 @@ Instead it must emit an error response and continue reading subsequent lines.
 ### Error response semantics
 - For errors that cannot be associated with a supported operation, respond with:
   - `{ "ok": false, "op": "", "error": "..." }`
+- This includes invalid JSON, oversized request lines, and unknown operations.
 - For success:
   - `{ "ok": true, "op": "<op>", "data": <payload> }`
 
