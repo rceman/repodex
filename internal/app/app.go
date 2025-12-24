@@ -13,6 +13,7 @@ import (
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/scan"
+	"github.com/memkit/repodex/internal/serve"
 	"github.com/memkit/repodex/internal/store"
 )
 
@@ -52,6 +53,14 @@ func Run(args []string) int {
 			return 0
 		case "status":
 			if err := runStatus(".", cmd.JSON); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return 0
+		}
+	case "serve":
+		if cmd.Stdio {
+			if err := runServeStdio("."); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -141,21 +150,49 @@ func runIndexSync(root string) error {
 }
 
 func runStatus(root string, jsonOut bool) error {
+	resp, err := computeStatus(root)
+	if err != nil {
+		return err
+	}
+	return outputStatus(resp, jsonOut)
+}
+
+func outputStatus(resp StatusResponse, jsonOut bool) error {
+	if jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		return enc.Encode(resp)
+	}
+	fmt.Printf("Indexed: %v\nDirty: %v\nChanged files: %d\n", resp.Indexed, resp.Dirty, resp.ChangedFiles)
+	return nil
+}
+
+func fileExistsOk(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func computeStatus(root string) (StatusResponse, error) {
 	metaPath := store.MetaPath(root)
 	filesPath := store.FilesPath(root)
 	cfgPath := store.ConfigPath(root)
 
 	metaExists, err := fileExistsOk(metaPath)
 	if err != nil {
-		return err
+		return StatusResponse{}, err
 	}
 	filesExists, err := fileExistsOk(filesPath)
 	if err != nil {
-		return err
+		return StatusResponse{}, err
 	}
 
 	if !metaExists || !filesExists {
-		resp := StatusResponse{
+		return StatusResponse{
 			Indexed:       false,
 			IndexedAtUnix: 0,
 			FileCount:     0,
@@ -163,34 +200,33 @@ func runStatus(root string, jsonOut bool) error {
 			TermCount:     0,
 			Dirty:         true,
 			ChangedFiles:  0,
-		}
-		return outputStatus(resp, jsonOut)
+		}, nil
 	}
 
 	meta, err := store.LoadMeta(metaPath)
 	if err != nil {
-		return err
+		return StatusResponse{}, err
 	}
 	cfg, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
-		return err
+		return StatusResponse{}, err
 	}
 	cfgHash := hash.Sum64(cfgBytes)
 	var ignoreDirs []string
 	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
 		ignoreDirs = dirs
 	} else if !os.IsNotExist(err) {
-		return err
+		return StatusResponse{}, err
 	}
 
 	indexedFiles, err := index.LoadFileEntries(filesPath)
 	if err != nil {
-		return err
+		return StatusResponse{}, err
 	}
 
 	currentFiles, err := scan.WalkMeta(root, cfg, ignoreDirs)
 	if err != nil {
-		return err
+		return StatusResponse{}, err
 	}
 
 	indexMap := make(map[string]index.FileEntry, len(indexedFiles))
@@ -220,7 +256,7 @@ func runStatus(root string, jsonOut bool) error {
 		}
 	}
 
-	resp := StatusResponse{
+	return StatusResponse{
 		Indexed:       true,
 		IndexedAtUnix: meta.IndexedAtUnix,
 		FileCount:     meta.FileCount,
@@ -228,26 +264,18 @@ func runStatus(root string, jsonOut bool) error {
 		TermCount:     meta.TermCount,
 		Dirty:         changed > 0,
 		ChangedFiles:  changed,
-	}
-	return outputStatus(resp, jsonOut)
+	}, nil
 }
 
-func outputStatus(resp StatusResponse, jsonOut bool) error {
-	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
-		return enc.Encode(resp)
+func runServeStdio(root string) error {
+	statusFn := func() (interface{}, error) {
+		return computeStatus(root)
 	}
-	fmt.Printf("Indexed: %v\nDirty: %v\nChanged files: %d\n", resp.Indexed, resp.Dirty, resp.ChangedFiles)
-	return nil
-}
-
-func fileExistsOk(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return false, nil
+	syncFn := func() (interface{}, error) {
+		if err := runIndexSync(root); err != nil {
+			return nil, err
+		}
+		return computeStatus(root)
 	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return serve.ServeStdio(root, statusFn, syncFn)
 }

@@ -8,6 +8,7 @@ type Command struct {
 	Subcommand string
 	JSON       bool
 	Force      bool
+	Stdio      bool
 }
 
 // Parse converts argv into a Command description.
@@ -50,6 +51,16 @@ func Parse(args []string) (Command, error) {
 		default:
 			return Command{}, fmt.Errorf("unknown index subcommand %s", sub)
 		}
+	case "serve":
+		c := Command{Action: "serve"}
+		if len(args) == 2 && args[1] == "--stdio" {
+			c.Stdio = true
+			return c, nil
+		}
+		if len(args) == 1 {
+			return Command{}, fmt.Errorf("missing serve mode")
+		}
+		return Command{}, fmt.Errorf("unknown flag %s", args[1])
 	default:
 		return Command{}, fmt.Errorf("unknown command %s", cmd)
 	}
