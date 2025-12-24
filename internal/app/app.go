@@ -182,6 +182,9 @@ func fileExistsOk(path string) (bool, error) {
 func computeStatus(root string) (StatusResponse, error) {
 	metaPath := store.MetaPath(root)
 	filesPath := store.FilesPath(root)
+	chunksPath := store.ChunksPath(root)
+	termsPath := store.TermsPath(root)
+	postingsPath := store.PostingsPath(root)
 	cfgPath := store.ConfigPath(root)
 
 	metaExists, err := fileExistsOk(metaPath)
@@ -192,8 +195,20 @@ func computeStatus(root string) (StatusResponse, error) {
 	if err != nil {
 		return StatusResponse{}, err
 	}
+	chunksExists, err := fileExistsOk(chunksPath)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	termsExists, err := fileExistsOk(termsPath)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	postingsExists, err := fileExistsOk(postingsPath)
+	if err != nil {
+		return StatusResponse{}, err
+	}
 
-	if !metaExists || !filesExists {
+	if !metaExists || !filesExists || !chunksExists || !termsExists || !postingsExists {
 		return StatusResponse{
 			Indexed:       false,
 			IndexedAtUnix: 0,
