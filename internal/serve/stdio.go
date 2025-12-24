@@ -148,6 +148,9 @@ func readLine(reader *bufio.Reader) ([]byte, bool, error) {
 				}
 				return bytes.TrimRight(buf.Bytes(), "\r\n"), false, nil
 			}
+			if err == bufio.ErrBufferFull {
+				continue
+			}
 			return nil, false, err
 		}
 	}
