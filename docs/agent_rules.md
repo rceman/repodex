@@ -26,6 +26,6 @@ Malformed JSON lines return `{"ok":false,"op":"","error":"..."}` because the req
 ## Limits
 
 - `search.top_k` defaults to 20 and is clamped to 20.
-- `search.max_per_file` defaults to 2 results per file.
+- `search.max_per_file` defaults to 2 results per file and is enforced internally, not configurable via stdio requests.
 - `fetch.ids` is trimmed to the first 5 IDs when more are requested.
 - `fetch.max_lines` defaults to 120 and is clamped to 120 lines.
