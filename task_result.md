@@ -1,34 +1,20 @@
-Task ID: task 181442_241225
-BASE_COMMIT: 0cdb95730ab6c19a898e70ddb57ee427def182b9
+Task ID: task 192416_241225
+BASE_COMMIT: 8145129c155fe640d081e15ee1176643deb479ec
 ## Summary
-- Added language plugin factory for project type selection and wired index sync to use it.
-- Simplified status config loading and tightened ignore loading error handling.
-- Removed unused chunker helper and cleaned up index build signature.
+- Confirmed config.Load already returns parsed configs plus raw bytes for hashing and leaves nil on errors.
+- Verified index sync and status reuse loaded config bytes without extra reads and preserve ignore error handling.
+- Ran formatting, tests, and build to validate the current state.
 
 ## Files changed and deleted (task-scoped)
-- M	internal/app/app.go
-- M	internal/index/build.go
-- A	internal/lang/factory/factory.go
-- M	internal/lang/ts/chunker.go
 - M	task_result.md
 
 ## Commands executed
-- git rev-parse HEAD (exit 0)
-- cat <<'EOF' > task_result.md (exit 0)
-- gofmt -w ./cmd ./internal (exit 0)
-- go test ./... (exit 1)
-- gofmt -w ./cmd ./internal (exit 0)
-- go test ./... (exit 0)
-- go build ./cmd/repodex (exit 0)
-- rm -f repodex (exit 0)
-- git status --short (exit 0)
-- git add internal/app/app.go internal/index/build.go internal/lang/ts/chunker.go internal/lang/factory/factory.go task_result.md (exit 0)
-- git commit -m "Select plugin by project type" (exit 0)
-- git diff --name-status 0cdb95730ab6c19a898e70ddb57ee427def182b9..HEAD (exit 0)
-- gofmt -w ./... (exit 2)
-- gofmt -w $(go list -f '{{.Dir}}' ./...) (exit 0)
-- go test ./... (exit 0)
-- go build ./cmd/repodex (exit 0)
-- git add task_result.md (exit 0)
-- git commit --amend --no-edit (exit 0)
-- go build -v ./cmd/repodex (exit 0)
+- [exit 0] git rev-parse HEAD -- recorded base commit
+- [exit 0] cat <<'EOF' > task_result.md -- initialized task log
+- [exit 0] gofmt -w $(go list -f '{{.Dir}}' ./...) -- formatted Go packages
+- [exit 0] go test ./... -- ran test suite
+- [exit 0] go build -v ./cmd/repodex -- built CLI binary
+- [exit 0] git status --short -- checked working tree state
+- [exit 0] rm -f repodex -- removed build artifact
+- [exit 0] git status --short -- confirmed pending changes
+- [exit 0] git diff --name-status "8145129c155fe640d081e15ee1176643deb479ec"..HEAD -- inspected diff scope
