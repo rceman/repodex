@@ -112,6 +112,7 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 		default:
 			resp.OK = false
 			resp.Error = "unknown op"
+			resp.Op = ""
 		}
 		_ = encoder.Encode(resp)
 	}
