@@ -52,6 +52,10 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 			return nil
 		}
 
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
 		if d.IsDir() {
 			if ignore.IsIgnoredDir(rel, normalizedIgnores) {
 				return filepath.SkipDir
@@ -119,6 +123,10 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 		}
 		rel = ignore.NormalizePath(rel)
 		if rel == "." {
+			return nil
+		}
+
+		if d.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 

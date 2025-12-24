@@ -29,13 +29,6 @@ type ChunkText struct {
 
 // Fetch returns chunk text constrained by limits.
 func Fetch(root string, ids []uint32, maxLines int) ([]ChunkText, error) {
-	if len(ids) > 5 {
-		ids = ids[:5]
-	}
-	if maxLines <= 0 || maxLines > 120 {
-		maxLines = 120
-	}
-
 	chunks, err := index.LoadChunkEntries(store.ChunksPath(root))
 	if err != nil {
 		return nil, err
@@ -45,13 +38,33 @@ func Fetch(root string, ids []uint32, maxLines int) ([]ChunkText, error) {
 		chunkMap[ch.ChunkID] = ch
 	}
 
+	return FetchWithChunkMap(root, chunkMap, ids, maxLines)
+}
+
+// FetchWithChunkMap returns chunk text constrained by limits using a preloaded chunk map.
+func FetchWithChunkMap(root string, chunkMap map[uint32]index.ChunkEntry, ids []uint32, maxLines int) ([]ChunkText, error) {
+	if len(ids) > 5 {
+		ids = ids[:5]
+	}
+	if maxLines <= 0 || maxLines > 120 {
+		maxLines = 120
+	}
+
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve root: %w", err)
+	}
+
 	var results []ChunkText
 	for _, id := range ids {
 		ch, ok := chunkMap[id]
 		if !ok {
 			return nil, fmt.Errorf("chunk %d not found in index", id)
 		}
-		fullPath := filepath.Join(root, ch.Path)
+		fullPath, err := resolvePath(rootReal, ch.Path)
+		if err != nil {
+			return nil, fmt.Errorf("chunk %d path %s rejected: %w", id, ch.Path, err)
+		}
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
 			return nil, fmt.Errorf("chunk %d path %s: %w", id, ch.Path, err)
@@ -122,4 +135,27 @@ func Fetch(root string, ids []uint32, maxLines int) ([]ChunkText, error) {
 	}
 
 	return results, nil
+}
+
+func resolvePath(rootReal string, chunkPath string) (string, error) {
+	if filepath.IsAbs(chunkPath) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	clean := filepath.Clean(filepath.FromSlash(chunkPath))
+	if clean == "." || clean == "" {
+		return "", fmt.Errorf("invalid path")
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path traversal detected")
+	}
+	full := filepath.Join(rootReal, clean)
+	fullReal, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", err
+	}
+	separator := string(os.PathSeparator)
+	if fullReal != rootReal && !strings.HasPrefix(fullReal, rootReal+separator) {
+		return "", fmt.Errorf("path escapes root")
+	}
+	return fullReal, nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
+	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/store"
 )
@@ -62,6 +63,23 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 	postings, err := index.LoadPostings(store.PostingsPath(root))
 	if err != nil {
 		return nil, err
+	}
+
+	return SearchWithIndex(cfg, plugin, chunks, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
+}
+
+// SearchWithIndex executes a keyword search using provided index data.
+func SearchWithIndex(cfg config.Config, plugin lang.LanguagePlugin, chunks []index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
+	topK := opts.TopK
+	if topK <= 0 {
+		topK = 20
+	}
+	if topK > 20 {
+		topK = 20
+	}
+	maxPerFile := opts.MaxPerFile
+	if maxPerFile <= 0 {
+		maxPerFile = 2
 	}
 
 	tokens := plugin.TokenizeChunk("", q, cfg.Token)
