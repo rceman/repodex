@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/memkit/repodex/internal/fetch"
 	"github.com/memkit/repodex/internal/search"
@@ -82,6 +83,12 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 			cache.Invalidate()
 			resp.Data = data
 		case "search":
+			if strings.TrimSpace(req.Q) == "" {
+				resp.OK = false
+				resp.Op = ""
+				resp.Error = "invalid search request: q is required"
+				break
+			}
 			if err := cache.Load(root); err != nil {
 				resp.OK = false
 				resp.Error = err.Error()
@@ -96,6 +103,18 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 			}
 			resp.Data = results
 		case "fetch":
+			if len(req.IDs) == 0 {
+				resp.OK = false
+				resp.Op = ""
+				resp.Error = "invalid fetch request: ids are required"
+				break
+			}
+			if len(req.IDs) > 5 {
+				resp.OK = false
+				resp.Op = ""
+				resp.Error = "invalid fetch request: maximum 5 ids allowed"
+				break
+			}
 			if err := cache.Load(root); err != nil {
 				resp.OK = false
 				resp.Error = err.Error()

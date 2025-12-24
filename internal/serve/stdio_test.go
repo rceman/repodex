@@ -227,6 +227,123 @@ func parseFetchResults(t *testing.T, data interface{}) []fetch.ChunkText {
 	return results
 }
 
+func TestServeStdioValidationSearch(t *testing.T) {
+	resp := runValidationRequest(t, `{"op":"search","q":""}`+"\n")
+	if resp.resp.OK {
+		t.Fatalf("empty search should not be OK: %s", resp.raw)
+	}
+	if resp.resp.Op != "" {
+		t.Fatalf("empty search should clear op, got %q", resp.resp.Op)
+	}
+	if resp.resp.Error != "invalid search request: q is required" {
+		t.Fatalf("unexpected error: %s", resp.resp.Error)
+	}
+}
+
+func TestServeStdioValidationFetch(t *testing.T) {
+	t.Run("missing ids", func(t *testing.T) {
+		resp := runValidationRequest(t, `{"op":"fetch"}`+"\n")
+		if resp.resp.OK {
+			t.Fatalf("missing ids should not be OK: %s", resp.raw)
+		}
+		if resp.resp.Op != "" {
+			t.Fatalf("missing ids should clear op, got %q", resp.resp.Op)
+		}
+		if resp.resp.Error != "invalid fetch request: ids are required" {
+			t.Fatalf("unexpected error: %s", resp.resp.Error)
+		}
+	})
+	t.Run("too many ids", func(t *testing.T) {
+		resp := runValidationRequest(t, `{"op":"fetch","ids":[1,2,3,4,5,6]}`+"\n")
+		if resp.resp.OK {
+			t.Fatalf("too many ids should not be OK: %s", resp.raw)
+		}
+		if resp.resp.Op != "" {
+			t.Fatalf("too many ids should clear op, got %q", resp.resp.Op)
+		}
+		if resp.resp.Error != "invalid fetch request: maximum 5 ids allowed" {
+			t.Fatalf("unexpected error: %s", resp.resp.Error)
+		}
+	})
+}
+
+func runValidationRequest(t *testing.T, payload string) responseLine {
+	t.Helper()
+	ioMu.Lock()
+	t.Cleanup(ioMu.Unlock)
+
+	root := t.TempDir()
+
+	stdinR, stdinW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+	})
+
+	origStdin, origStdout := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = stdinR, stdoutW
+	t.Cleanup(func() {
+		os.Stdin, os.Stdout = origStdin, origStdout
+	})
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- ServeStdio(root, func() (interface{}, error) {
+			return nil, nil
+		}, func() (interface{}, error) {
+			return nil, nil
+		})
+	}()
+
+	respCh := make(chan responseLine, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdoutR)
+		scanner.Buffer(make([]byte, 0, 1024), 8*1024*1024)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			var resp Response
+			if err := json.Unmarshal(line, &resp); err != nil {
+				respCh <- responseLine{err: fmt.Errorf("decode response %q: %w", string(line), err)}
+				continue
+			}
+			respCh <- responseLine{resp: resp, raw: string(line)}
+		}
+		if err := scanner.Err(); err != nil {
+			respCh <- responseLine{err: err}
+		}
+		close(respCh)
+	}()
+
+	writeRequest(t, stdinW, payload)
+	if err := stdinW.Close(); err != nil {
+		t.Fatalf("close stdin writer: %v", err)
+	}
+	resp := readResponse(t, respCh)
+	if err := <-serverErrCh; err != nil {
+		t.Fatalf("server error: %v", err)
+	}
+	if err := stdoutW.Close(); err != nil {
+		t.Fatalf("close stdout writer: %v", err)
+	}
+	for extra := range respCh {
+		if extra.err != nil {
+			t.Fatalf("response stream error: %v", extra.err)
+		}
+		t.Fatalf("unexpected extra response: %s", extra.raw)
+	}
+	return resp
+}
+
 func buildTestIndex(t *testing.T, root string) {
 	t.Helper()
 	srcDir := filepath.Join(root, "src")
