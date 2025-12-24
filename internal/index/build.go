@@ -17,10 +17,16 @@ func Build(files []scan.ScannedFile, plugin lang.LanguagePlugin, cfg config.Conf
 	var chunkEntries []ChunkEntry
 	postings := make(map[string][]uint32)
 
+	sortedFiles := make([]scan.ScannedFile, len(files))
+	copy(sortedFiles, files)
+	sort.Slice(sortedFiles, func(i, j int) bool {
+		return filepath.ToSlash(sortedFiles[i].Path) < filepath.ToSlash(sortedFiles[j].Path)
+	})
+
 	var nextFileID uint32 = 1
 	var nextChunkID uint32 = 1
 
-	for _, f := range files {
+	for _, f := range sortedFiles {
 		path := filepath.ToSlash(f.Path)
 		fileEntry := FileEntry{
 			FileID: nextFileID,
