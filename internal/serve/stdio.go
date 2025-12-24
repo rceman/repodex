@@ -110,10 +110,7 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				break
 			}
 			if len(req.IDs) > 5 {
-				resp.OK = false
-				resp.Op = ""
-				resp.Error = "invalid fetch request: maximum 5 ids allowed"
-				break
+				req.IDs = req.IDs[:5]
 			}
 			if err := cache.Load(root); err != nil {
 				resp.OK = false

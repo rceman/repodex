@@ -282,7 +282,7 @@ func parseFetchResults(t *testing.T, data interface{}) []fetch.ChunkText {
 }
 
 func TestServeStdioValidationSearch(t *testing.T) {
-	resp := runValidationRequest(t, `{"op":"search","q":""}`+"\n")
+	resp := runValidationRequest(t, "", `{"op":"search","q":""}`+"\n")
 	if resp.resp.OK {
 		t.Fatalf("empty search should not be OK: %s", resp.raw)
 	}
@@ -296,7 +296,7 @@ func TestServeStdioValidationSearch(t *testing.T) {
 
 func TestServeStdioValidationFetch(t *testing.T) {
 	t.Run("missing ids", func(t *testing.T) {
-		resp := runValidationRequest(t, `{"op":"fetch"}`+"\n")
+		resp := runValidationRequest(t, "", `{"op":"fetch"}`+"\n")
 		if resp.resp.OK {
 			t.Fatalf("missing ids should not be OK: %s", resp.raw)
 		}
@@ -307,26 +307,59 @@ func TestServeStdioValidationFetch(t *testing.T) {
 			t.Fatalf("unexpected error: %s", resp.resp.Error)
 		}
 	})
-	t.Run("too many ids", func(t *testing.T) {
-		resp := runValidationRequest(t, `{"op":"fetch","ids":[1,2,3,4,5,6]}`+"\n")
-		if resp.resp.OK {
-			t.Fatalf("too many ids should not be OK: %s", resp.raw)
+	t.Run("truncates extra ids", func(t *testing.T) {
+		root := t.TempDir()
+		buildTestIndex(t, root)
+
+		chunks, err := index.LoadChunkEntries(store.ChunksPath(root))
+		if err != nil {
+			t.Fatalf("load chunks: %v", err)
 		}
-		if resp.resp.Op != "" {
-			t.Fatalf("too many ids should clear op, got %q", resp.resp.Op)
+		if len(chunks) == 0 {
+			t.Fatalf("expected chunk entries")
 		}
-		if resp.resp.Error != "invalid fetch request: maximum 5 ids allowed" {
-			t.Fatalf("unexpected error: %s", resp.resp.Error)
+		ids := make([]uint32, 0, 6)
+		for len(ids) < 6 {
+			for _, ch := range chunks {
+				ids = append(ids, ch.ChunkID)
+				if len(ids) == 6 {
+					break
+				}
+			}
+		}
+
+		idsJSON, err := json.Marshal(ids)
+		if err != nil {
+			t.Fatalf("marshal ids: %v", err)
+		}
+		payload := fmt.Sprintf(`{"op":"fetch","ids":%s}`, string(idsJSON)) + "\n"
+		resp := runValidationRequest(t, root, payload)
+		if !resp.resp.OK {
+			t.Fatalf("too many ids should be OK: %s", resp.raw)
+		}
+		if resp.resp.Op != "fetch" {
+			t.Fatalf("expected fetch op, got %q", resp.resp.Op)
+		}
+		results := parseFetchResults(t, resp.resp.Data)
+		if len(results) != 5 {
+			t.Fatalf("expected 5 fetch results, got %d", len(results))
+		}
+		for i, fetched := range results {
+			if fetched.ChunkID != ids[i] {
+				t.Fatalf("result %d chunk id mismatch: got %d want %d", i, fetched.ChunkID, ids[i])
+			}
 		}
 	})
 }
 
-func runValidationRequest(t *testing.T, payload string) responseLine {
+func runValidationRequest(t *testing.T, root, payload string) responseLine {
 	t.Helper()
 	ioMu.Lock()
 	t.Cleanup(ioMu.Unlock)
 
-	root := t.TempDir()
+	if root == "" {
+		root = t.TempDir()
+	}
 
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
