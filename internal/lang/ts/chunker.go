@@ -179,16 +179,16 @@ func updateDepth(line string, braceDepth *int, parenDepth *int, inBlockComment *
 
 		switch ch {
 		case '{':
-			*braceDepth++
+			(*braceDepth)++
 		case '}':
 			if *braceDepth > 0 {
-				*braceDepth--
+				(*braceDepth)--
 			}
 		case '(':
-			*parenDepth++
+			(*parenDepth)++
 		case ')':
 			if *parenDepth > 0 {
-				*parenDepth--
+				(*parenDepth)--
 			}
 		}
 	}
