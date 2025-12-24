@@ -91,7 +91,7 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 			Path:    rel,
 			Content: content,
 			MTime:   info.ModTime().Unix(),
-			Size:    int64(len(content)),
+			Size:    info.Size(),
 			Hash64:  hash64,
 		})
 

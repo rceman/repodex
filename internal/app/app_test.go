@@ -73,3 +73,30 @@ func TestComputeStatusMissingIndexArtifact(t *testing.T) {
 		t.Fatalf("expected ChangedFiles to be 0 for missing artifact, got %d", resp.ChangedFiles)
 	}
 }
+
+func TestComputeStatusCRLFFileNotDirtyAfterSync(t *testing.T) {
+	root := t.TempDir()
+
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
+	}
+
+	content := "const a = 1;\r\nconst b = 2;\r\n"
+	srcPath := filepath.Join(root, "sample.ts")
+	if err := os.WriteFile(srcPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write source file: %v", err)
+	}
+
+	if err := runIndexSync(root); err != nil {
+		t.Fatalf("runIndexSync failed: %v", err)
+	}
+
+	resp, err := computeStatus(root)
+	if err != nil {
+		t.Fatalf("computeStatus returned error: %v", err)
+	}
+
+	if resp.Dirty {
+		t.Fatalf("expected Dirty to be false after syncing CRLF file")
+	}
+}
