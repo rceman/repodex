@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/memkit/repodex/internal/config"
+	"github.com/memkit/repodex/internal/textutil"
 )
 
 func TestChunkerGroupsConst(t *testing.T) {
@@ -102,6 +103,27 @@ func TestChunkerFallbackNoTriggers(t *testing.T) {
 	expectedEnd := uint32(len(strings.Split(content, "\n")))
 	if chunks[0].StartLine != 1 || chunks[0].EndLine != expectedEnd {
 		t.Fatalf("unexpected chunk range %d-%d", chunks[0].StartLine, chunks[0].EndLine)
+	}
+}
+
+func TestChunkerNormalizesCRLF(t *testing.T) {
+	content := "import a from 'a';\r\n\r\nfunction foo() {\r\n  return 1;\r\n}\r\n"
+	cfg := config.ChunkingConfig{MaxLines: 50, OverlapLines: 5, MinChunkLines: 1}
+	limits := config.LimitsConfig{MaxSnippetBytes: 200}
+
+	chunks, err := ChunkFile("sample.ts", []byte(content), cfg, limits)
+	if err != nil {
+		t.Fatalf("chunk error: %v", err)
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+	expectedEnd := uint32(len(strings.Split(textutil.NormalizeNewlinesString(content), "\n")))
+	if chunks[0].StartLine != 1 || chunks[0].EndLine != 2 {
+		t.Fatalf("unexpected import chunk range %d-%d", chunks[0].StartLine, chunks[0].EndLine)
+	}
+	if chunks[1].EndLine != expectedEnd {
+		t.Fatalf("unexpected function chunk end %d", chunks[1].EndLine)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/hash"
 	"github.com/memkit/repodex/internal/ignore"
+	"github.com/memkit/repodex/internal/textutil"
 )
 
 // ScannedFile represents a file collected during scanning.
@@ -83,13 +84,14 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 		if err != nil {
 			return err
 		}
+		content = textutil.NormalizeNewlinesBytes(content)
 		hash64 := hash.Sum64(content)
 
 		files = append(files, ScannedFile{
 			Path:    rel,
 			Content: content,
 			MTime:   info.ModTime().Unix(),
-			Size:    info.Size(),
+			Size:    int64(len(content)),
 			Hash64:  hash64,
 		})
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/lang"
+	"github.com/memkit/repodex/internal/textutil"
 )
 
 type block struct {
@@ -15,7 +16,8 @@ type block struct {
 
 // ChunkFile splits a TS or TSX file into chunk drafts using simple heuristics.
 func ChunkFile(path string, content []byte, cfg config.ChunkingConfig, limits config.LimitsConfig) ([]lang.ChunkDraft, error) {
-	lines := strings.Split(string(content), "\n")
+	normalized := textutil.NormalizeNewlinesString(string(content))
+	lines := strings.Split(normalized, "\n")
 	blocks := collectBlocks(lines, cfg)
 	if len(blocks) == 0 && len(lines) > 0 {
 		blocks = []block{{start: 1, end: len(lines)}}

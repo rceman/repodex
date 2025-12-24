@@ -8,6 +8,7 @@ import (
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/scan"
+	"github.com/memkit/repodex/internal/textutil"
 )
 
 // Build constructs in-memory index structures.
@@ -31,12 +32,14 @@ func Build(files []scan.ScannedFile, plugin lang.LanguagePlugin, cfg config.Conf
 		nextFileID++
 		fileEntries = append(fileEntries, fileEntry)
 
-		chunks, err := plugin.ChunkFile(path, f.Content, cfg.Chunk, cfg.Limits)
+		normalizedContent := textutil.NormalizeNewlinesBytes(f.Content)
+
+		chunks, err := plugin.ChunkFile(path, normalizedContent, cfg.Chunk, cfg.Limits)
 		if err != nil {
 			return nil, nil, nil, err
 		}
 
-		lines := strings.Split(string(f.Content), "\n")
+		lines := strings.Split(string(normalizedContent), "\n")
 
 		for _, ch := range chunks {
 			chunkText := extractText(lines, int(ch.StartLine), int(ch.EndLine))
