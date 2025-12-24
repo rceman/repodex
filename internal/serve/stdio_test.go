@@ -182,6 +182,60 @@ func TestServeStdioIntegration(t *testing.T) {
 	}
 }
 
+func TestReadLineBufferFullWithinLimit(t *testing.T) {
+	content := strings.Repeat("x", 64*1024)
+	reader := bufio.NewReaderSize(strings.NewReader(content+"\nnext\n"), 16)
+
+	line, tooLarge, err := readLine(reader)
+	if err != nil {
+		t.Fatalf("readLine error: %v", err)
+	}
+	if tooLarge {
+		t.Fatalf("unexpected tooLarge for buffered line")
+	}
+	if string(line) != content {
+		t.Fatalf("line mismatch: got %d bytes", len(line))
+	}
+
+	next, tooLarge, err := readLine(reader)
+	if err != nil {
+		t.Fatalf("readLine second error: %v", err)
+	}
+	if tooLarge {
+		t.Fatalf("second line unexpectedly too large")
+	}
+	if string(next) != "next" {
+		t.Fatalf("unexpected second line: %q", next)
+	}
+}
+
+func TestReadLineBufferFullTooLarge(t *testing.T) {
+	content := strings.Repeat("y", MaxRequestBytes+128)
+	reader := bufio.NewReaderSize(strings.NewReader(content+"\nokay\n"), 32)
+
+	line, tooLarge, err := readLine(reader)
+	if err != nil {
+		t.Fatalf("readLine error: %v", err)
+	}
+	if !tooLarge {
+		t.Fatalf("expected tooLarge flag for oversized line")
+	}
+	if len(line) != MaxRequestBytes {
+		t.Fatalf("expected truncated line length %d, got %d", MaxRequestBytes, len(line))
+	}
+
+	next, tooLarge, err := readLine(reader)
+	if err != nil {
+		t.Fatalf("readLine second error: %v", err)
+	}
+	if tooLarge {
+		t.Fatalf("second line unexpectedly too large")
+	}
+	if string(next) != "okay" {
+		t.Fatalf("unexpected second line: %q", next)
+	}
+}
+
 func writeRequest(t *testing.T, w io.Writer, payload string) {
 	t.Helper()
 	if _, err := io.WriteString(w, payload); err != nil {
