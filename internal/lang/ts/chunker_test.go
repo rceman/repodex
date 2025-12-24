@@ -143,3 +143,30 @@ func TestChunkerIterativeMinMerge(t *testing.T) {
 		t.Fatalf("unexpected merged chunk range %d-%d", chunks[0].StartLine, chunks[0].EndLine)
 	}
 }
+
+func TestUpdateDepthNestedAndComments(t *testing.T) {
+	braceDepth := 0
+	parenDepth := 0
+	inBlockComment := false
+
+	steps := []struct {
+		line      string
+		wantBrace int
+		wantParen int
+		wantBlock bool
+	}{
+		{"if (foo", 0, 1, false},
+		{"  && (bar)) {", 1, 0, false},
+		{"  /* comment with { (", 1, 0, true},
+		{"  still comment */ })", 0, 0, false},
+		{"}", 0, 0, false},
+	}
+
+	for idx, step := range steps {
+		updateDepth(step.line, &braceDepth, &parenDepth, &inBlockComment)
+		if braceDepth != step.wantBrace || parenDepth != step.wantParen || inBlockComment != step.wantBlock {
+			t.Fatalf("step %d after line %q got brace=%d paren=%d block=%v; want brace=%d paren=%d block=%v",
+				idx, step.line, braceDepth, parenDepth, inBlockComment, step.wantBrace, step.wantParen, step.wantBlock)
+		}
+	}
+}
