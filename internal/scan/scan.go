@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/memkit/repodex/internal/config"
@@ -38,7 +39,13 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 		normalizedIgnores = append(normalizedIgnores, ignore.NormalizePath(dir))
 	}
 
-	var files []ScannedFile
+	type candidate struct {
+		relPath string
+		absPath string
+		info    fs.FileInfo
+	}
+
+	var candidates []candidate
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -80,25 +87,38 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 			return nil
 		}
 
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		content = textutil.NormalizeNewlinesBytes(content)
-		hash64 := hash.Sum64(content)
-
-		files = append(files, ScannedFile{
-			Path:    rel,
-			Content: content,
-			MTime:   info.ModTime().Unix(),
-			Size:    info.Size(),
-			Hash64:  hash64,
+		candidates = append(candidates, candidate{
+			relPath: rel,
+			absPath: path,
+			info:    info,
 		})
 
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].relPath < candidates[j].relPath
+	})
+
+	files := make([]ScannedFile, 0, len(candidates))
+	for _, cand := range candidates {
+		content, err := os.ReadFile(cand.absPath)
+		if err != nil {
+			return nil, err
+		}
+		content = textutil.NormalizeNewlinesBytes(content)
+		hash64 := hash.Sum64(content)
+
+		files = append(files, ScannedFile{
+			Path:    cand.relPath,
+			Content: content,
+			MTime:   cand.info.ModTime().Unix(),
+			Size:    cand.info.Size(),
+			Hash64:  hash64,
+		})
 	}
 	return files, nil
 }
@@ -113,7 +133,12 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 		normalizedIgnores = append(normalizedIgnores, ignore.NormalizePath(dir))
 	}
 
-	var files []FileStat
+	type candidate struct {
+		relPath string
+		info    fs.FileInfo
+	}
+
+	var candidates []candidate
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -154,16 +179,28 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 			return nil
 		}
 
-		files = append(files, FileStat{
-			Path:  rel,
-			MTime: info.ModTime().Unix(),
-			Size:  info.Size(),
+		candidates = append(candidates, candidate{
+			relPath: rel,
+			info:    info,
 		})
 
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].relPath < candidates[j].relPath
+	})
+
+	files := make([]FileStat, 0, len(candidates))
+	for _, cand := range candidates {
+		files = append(files, FileStat{
+			Path:  cand.relPath,
+			MTime: cand.info.ModTime().Unix(),
+			Size:  cand.info.Size(),
+		})
 	}
 	return files, nil
 }
