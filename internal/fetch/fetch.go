@@ -58,6 +58,8 @@ func Fetch(root string, ids []uint32, maxLines int) ([]ChunkText, error) {
 		}
 
 		text := string(data)
+		text = strings.ReplaceAll(text, "\r\n", "\n")
+		text = strings.ReplaceAll(text, "\r", "\n")
 		text = strings.TrimRight(text, "\n")
 
 		var lines []string
