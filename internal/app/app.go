@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/memkit/repodex/internal/cachex"
 	"github.com/memkit/repodex/internal/cli"
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/fetch"
@@ -12,12 +15,14 @@ import (
 	"github.com/memkit/repodex/internal/hash"
 	"github.com/memkit/repodex/internal/ignore"
 	"github.com/memkit/repodex/internal/index"
+	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/scan"
 	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/serve"
 	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
+	"github.com/memkit/repodex/internal/textutil"
 )
 
 // StatusResponse describes output of status command.
@@ -168,11 +173,108 @@ func runInit(root string, force bool) error {
 	return nil
 }
 
-func runIndexSync(root string) error {
-	if st, err := computeStatusResolved(root); err == nil {
-		if st.SyncPlan != nil && st.SyncPlan.Mode == statusx.ModeNoop {
-			return nil
+func precomputedFromCache(entry cachex.CacheEntry) (index.PrecomputedFile, error) {
+	if len(entry.Chunks) != len(entry.Tokens) {
+		return index.PrecomputedFile{}, fmt.Errorf("cache invalid for %s: chunk/token length mismatch", entry.RelPath)
+	}
+	const maxU32 = uint64(^uint32(0))
+	chunks := make([]index.PrecomputedChunk, 0, len(entry.Chunks))
+	for idx, ch := range entry.Chunks {
+		if ch.Start < 1 || ch.End < 1 || ch.End < ch.Start {
+			return index.PrecomputedFile{}, fmt.Errorf("cache invalid for %s: invalid chunk line range", entry.RelPath)
 		}
+		if uint64(ch.Start) > maxU32 || uint64(ch.End) > maxU32 {
+			return index.PrecomputedFile{}, fmt.Errorf("cache invalid for %s: invalid chunk line range", entry.RelPath)
+		}
+		chunks = append(chunks, index.PrecomputedChunk{
+			StartLine: uint32(ch.Start),
+			EndLine:   uint32(ch.End),
+			Snippet:   ch.Snippet,
+			Tokens:    entry.Tokens[idx],
+		})
+	}
+	return index.PrecomputedFile{
+		Path:   filepath.ToSlash(entry.RelPath),
+		MTime:  entry.MTime,
+		Size:   entry.Size,
+		Hash64: entry.Hash64,
+		Chunks: chunks,
+	}, nil
+}
+
+func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Config) (index.PrecomputedFile, cachex.CacheEntry, error) {
+	content, err := os.ReadFile(ref.AbsPath)
+	if err != nil {
+		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
+	}
+	normalized := textutil.NormalizeNewlinesBytes(content)
+	hash64 := hash.Sum64(normalized)
+
+	chunkDrafts, err := plugin.ChunkFile(ref.RelPath, normalized, cfg.Chunk, cfg.Limits)
+	if err != nil {
+		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
+	}
+	lines := strings.Split(string(normalized), "\n")
+
+	precomputedChunks := make([]index.PrecomputedChunk, 0, len(chunkDrafts))
+	cacheChunks := make([]cachex.LocalChunk, 0, len(chunkDrafts))
+	tokenSets := make([][]string, 0, len(chunkDrafts))
+
+	for _, ch := range chunkDrafts {
+		chunkText := chunkTextFromLines(lines, int(ch.StartLine), int(ch.EndLine))
+		tokens := plugin.TokenizeChunk(ref.RelPath, chunkText, cfg.Token)
+		precomputedChunks = append(precomputedChunks, index.PrecomputedChunk{
+			StartLine: ch.StartLine,
+			EndLine:   ch.EndLine,
+			Snippet:   ch.Snippet,
+			Tokens:    tokens,
+		})
+		cacheChunks = append(cacheChunks, cachex.LocalChunk{
+			Start:   int(ch.StartLine),
+			End:     int(ch.EndLine),
+			Snippet: ch.Snippet,
+		})
+		tokenSets = append(tokenSets, tokens)
+	}
+
+	file := index.PrecomputedFile{
+		Path:   filepath.ToSlash(ref.RelPath),
+		MTime:  ref.MTime,
+		Size:   ref.Size,
+		Hash64: hash64,
+		Chunks: precomputedChunks,
+	}
+	cacheEntry := cachex.CacheEntry{
+		RelPath: filepath.ToSlash(ref.RelPath),
+		Size:    ref.Size,
+		MTime:   ref.MTime,
+		Hash64:  hash64,
+		Chunks:  cacheChunks,
+		Tokens:  tokenSets,
+	}
+	return file, cacheEntry, nil
+}
+
+func chunkTextFromLines(lines []string, start, end int) string {
+	if start < 1 {
+		start = 1
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > end {
+		return ""
+	}
+	return strings.Join(lines[start-1:end], "\n")
+}
+
+func runIndexSync(root string) error {
+	st, err := computeStatusResolved(root)
+	if err != nil {
+		return err
+	}
+	if st.SyncPlan != nil && st.SyncPlan.Mode == statusx.ModeNoop {
+		return nil
 	}
 
 	cfgPath := store.ConfigPath(root)
@@ -180,6 +282,7 @@ func runIndexSync(root string) error {
 	if err != nil {
 		return err
 	}
+	cfgHash := hash.Sum64(cfgBytes)
 
 	var ignoreDirs []string
 	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
@@ -193,12 +296,71 @@ func runIndexSync(root string) error {
 		return err
 	}
 
-	files, err := scan.Walk(root, cfg, ignoreDirs)
+	changedSet := make(map[string]struct{})
+	fullRebuild := true
+	if st.SyncPlan != nil {
+		for _, p := range st.SyncPlan.ChangedPaths {
+			changedSet[ignore.NormalizePath(p)] = struct{}{}
+		}
+		fullRebuild = st.SyncPlan.Why == statusx.WhyMissingIndex ||
+			st.SyncPlan.Why == statusx.WhySchemaChanged ||
+			st.SyncPlan.Why == statusx.WhyConfigChanged
+	}
+
+	if fullRebuild {
+		if err := cachex.PurgeV1(root); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	purged, err := cachex.EnsureMeta(root, cachex.Meta{
+		ConfigHash:  cfgHash,
+		ProjectType: cfg.ProjectType,
+	})
+	if err != nil {
+		return err
+	}
+	if purged {
+		fullRebuild = true
+	}
+
+	refs, err := scan.WalkRefs(root, cfg, ignoreDirs)
 	if err != nil {
 		return err
 	}
 
-	fileEntries, chunkEntries, postings, err := index.Build(files, plugin, cfg)
+	precomputed := make([]index.PrecomputedFile, 0, len(refs))
+	for _, ref := range refs {
+		rebuild := fullRebuild
+		if !rebuild {
+			_, rebuild = changedSet[ref.RelPath]
+		}
+		if !rebuild {
+			entry, ok, err := cachex.LoadByPath(root, ref.RelPath)
+			if err != nil {
+				return err
+			}
+			if ok {
+				file, err := precomputedFromCache(entry)
+				if err != nil {
+					return err
+				}
+				precomputed = append(precomputed, file)
+				continue
+			}
+		}
+
+		file, cacheEntry, err := buildCacheEntry(ref, plugin, cfg)
+		if err != nil {
+			return err
+		}
+		if err := cachex.Save(root, cacheEntry); err != nil {
+			return err
+		}
+		precomputed = append(precomputed, file)
+	}
+
+	fileEntries, chunkEntries, postings, err := index.BuildFromPrecomputed(precomputed)
 	if err != nil {
 		return err
 	}
@@ -208,7 +370,6 @@ func runIndexSync(root string) error {
 	}
 
 	repoHead := currentRepoHead(root)
-	cfgHash := hash.Sum64(cfgBytes)
 	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
