@@ -93,8 +93,8 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				resp.Error = err.Error()
 				break
 			}
-			cfg, _, plugin, chunks, _, terms, postings := cache.Get()
-			results, err := search.SearchWithIndex(cfg, plugin, chunks, terms, postings, req.Q, search.Options{TopK: req.TopK})
+			cfg, _, plugin, chunks, chunkMap, terms, postings := cache.Get()
+			results, err := search.SearchWithIndex(cfg, plugin, chunks, chunkMap, terms, postings, req.Q, search.Options{TopK: req.TopK})
 			if err != nil {
 				resp.OK = false
 				resp.Error = err.Error()

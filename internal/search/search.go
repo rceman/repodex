@@ -65,11 +65,11 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 		return nil, err
 	}
 
-	return SearchWithIndex(cfg, plugin, chunks, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
+	return SearchWithIndex(cfg, plugin, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
 }
 
 // SearchWithIndex executes a keyword search using provided index data.
-func SearchWithIndex(cfg config.Config, plugin lang.LanguagePlugin, chunks []index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
+func SearchWithIndex(cfg config.Config, plugin lang.LanguagePlugin, chunks []index.ChunkEntry, chunkMap map[uint32]index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
 	topK := opts.TopK
 	if topK <= 0 {
 		topK = 20
@@ -97,9 +97,11 @@ func SearchWithIndex(cfg config.Config, plugin lang.LanguagePlugin, chunks []ind
 		return nil, nil
 	}
 
-	chunkMap := make(map[uint32]index.ChunkEntry, len(chunks))
-	for _, ch := range chunks {
-		chunkMap[ch.ChunkID] = ch
+	if chunkMap == nil {
+		chunkMap = make(map[uint32]index.ChunkEntry, len(chunks))
+		for _, ch := range chunks {
+			chunkMap[ch.ChunkID] = ch
+		}
 	}
 
 	N := float64(len(chunks))
