@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/memkit/repodex/internal/cli"
 	"github.com/memkit/repodex/internal/config"
@@ -63,33 +62,39 @@ func Run(args []string) int {
 		return 1
 	}
 
+	repoRoot, err := resolveRepoRoot(".")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
 	switch cmd.Action {
 	case "init":
-		if err := runInit(".", cmd.Force); err != nil {
+		if err := runInit(repoRoot, cmd.Force); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "status":
-		if err := runStatus(".", cmd.JSON); err != nil {
+		if err := runStatus(repoRoot, cmd.JSON); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "sync":
-		if err := runIndexSync("."); err != nil {
+		if err := runIndexSync(repoRoot); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "search":
-		if err := runSearch(".", cmd.Q, cmd.TopK); err != nil {
+		if err := runSearch(repoRoot, cmd.Q, cmd.TopK); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "fetch":
-		if err := runFetch(".", cmd.IDs, cmd.MaxLines); err != nil {
+		if err := runFetch(repoRoot, cmd.IDs, cmd.MaxLines); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -97,13 +102,13 @@ func Run(args []string) int {
 	case "index":
 		switch cmd.Subcommand {
 		case "sync":
-			if err := runIndexSync("."); err != nil {
+			if err := runIndexSync(repoRoot); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
 			return 0
 		case "status":
-			if err := runStatus(".", cmd.JSON); err != nil {
+			if err := runStatus(repoRoot, cmd.JSON); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -111,7 +116,7 @@ func Run(args []string) int {
 		}
 	case "serve":
 		if cmd.Stdio {
-			if err := runServeStdio("."); err != nil {
+			if err := runServeStdio(repoRoot); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -124,6 +129,11 @@ func Run(args []string) int {
 }
 
 func runInit(root string, force bool) error {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return err
+	}
+
 	dir := store.Dir(root)
 	if !force {
 		if _, err := os.Stat(dir); err == nil {
@@ -163,8 +173,13 @@ func runInit(root string, force bool) error {
 }
 
 func runIndexSync(root string) error {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return err
+	}
+
 	if st, err := computeStatus(root); err == nil {
-		if st.SyncPlan != nil && st.SyncPlan.Mode == "noop" {
+		if st.SyncPlan != nil && st.SyncPlan.Mode == statusx.ModeNoop {
 			return nil
 		}
 	}
@@ -211,6 +226,11 @@ func runIndexSync(root string) error {
 }
 
 func runStatus(root string, jsonOut bool) error {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return err
+	}
+
 	resp, err := computeStatus(root)
 	if err != nil {
 		return err
@@ -231,7 +251,7 @@ func outputStatus(resp StatusResponse, jsonOut bool) error {
 	}
 	if resp.SyncPlan != nil {
 		fmt.Printf("Sync plan: mode=%s, why=%s\n", resp.SyncPlan.Mode, resp.SyncPlan.Why)
-		if resp.SyncPlan.Why == "git_changed_non_indexable" && resp.GitDirtyRepodexOnly {
+		if resp.SyncPlan.Why == statusx.WhyGitChangedNonIndexable && resp.GitDirtyRepodexOnly {
 			fmt.Printf("Note: repo dirty only due to .repodex; commit index artifacts for portability.\n")
 		}
 	}
@@ -250,6 +270,11 @@ func fileExistsOk(path string) (bool, error) {
 }
 
 func computeStatus(root string) (StatusResponse, error) {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+
 	metaPath := store.MetaPath(root)
 	filesPath := store.FilesPath(root)
 	chunksPath := store.ChunksPath(root)
@@ -286,6 +311,9 @@ func computeStatus(root string) (StatusResponse, error) {
 			}
 		}
 		gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+		if !gitInfo.Repo {
+			return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
+		}
 		resp := StatusResponse{
 			Indexed:       false,
 			IndexedAtUnix: 0,
@@ -297,15 +325,15 @@ func computeStatus(root string) (StatusResponse, error) {
 		}
 		applyGitInfo(&resp, gitInfo)
 		resp.SyncPlan = &statusx.SyncPlan{
-			Mode:             "full",
-			Why:              "missing_index",
+			Mode:             statusx.ModeFull,
+			Why:              statusx.WhyMissingIndex,
 			BaseHead:         gitInfo.BaseHead,
 			CurrentHead:      gitInfo.CurrentHead,
 			WorktreeClean:    gitInfo.WorktreeClean,
 			ChangedPaths:     gitInfo.ChangedPaths,
 			ChangedPathCount: gitInfo.ChangedPathCount,
 		}
-		resp.Dirty = resp.SyncPlan.Mode != "noop"
+		resp.Dirty = resp.SyncPlan.Mode != statusx.ModeNoop
 		if gitInfo.Repo {
 			resp.ChangedFiles = resp.SyncPlan.ChangedPathCount
 		}
@@ -318,74 +346,17 @@ func computeStatus(root string) (StatusResponse, error) {
 	}
 
 	gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+	if !gitInfo.Repo {
+		return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
+	}
 
-	cfg, cfgBytes, err := config.Load(cfgPath)
+	_, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
 		return StatusResponse{}, err
 	}
 	cfgHash := hash.Sum64(cfgBytes)
 
 	plan := statusx.BuildSyncPlan(meta, cfgHash, gitInfo)
-	if gitInfo.Repo {
-		resp := StatusResponse{
-			Indexed:        true,
-			IndexedAtUnix:  meta.IndexedAtUnix,
-			FileCount:      meta.FileCount,
-			ChunkCount:     meta.ChunkCount,
-			TermCount:      meta.TermCount,
-			Dirty:          plan.Mode != "noop",
-			ChangedFiles:   plan.ChangedPathCount,
-			SchemaVersion:  meta.SchemaVersion,
-			RepodexVersion: meta.RepodexVersion,
-		}
-		applyGitInfo(&resp, gitInfo)
-		resp.SyncPlan = plan
-		return resp, nil
-	}
-
-	var ignoreDirs []string
-	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
-		ignoreDirs = dirs
-	} else if !os.IsNotExist(err) {
-		return StatusResponse{}, err
-	}
-
-	indexedFiles, err := index.LoadFileEntries(filesPath)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-
-	currentFiles, err := scan.WalkMeta(root, cfg, ignoreDirs)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-
-	indexMap := make(map[string]index.FileEntry, len(indexedFiles))
-	for _, f := range indexedFiles {
-		indexMap[filepath.ToSlash(f.Path)] = f
-	}
-
-	seen := make(map[string]struct{})
-	changed := 0
-	if meta.ConfigHash != cfgHash {
-		changed++
-	}
-	for _, f := range currentFiles {
-		path := filepath.ToSlash(f.Path)
-		seen[path] = struct{}{}
-		if existing, ok := indexMap[path]; ok {
-			if existing.MTime != f.MTime || existing.Size != f.Size {
-				changed++
-			}
-		} else {
-			changed++
-		}
-	}
-	for path := range indexMap {
-		if _, ok := seen[path]; !ok {
-			changed++
-		}
-	}
 
 	resp := StatusResponse{
 		Indexed:        true,
@@ -393,20 +364,13 @@ func computeStatus(root string) (StatusResponse, error) {
 		FileCount:      meta.FileCount,
 		ChunkCount:     meta.ChunkCount,
 		TermCount:      meta.TermCount,
-		Dirty:          changed > 0,
-		ChangedFiles:   changed,
+		Dirty:          plan.Mode != statusx.ModeNoop,
+		ChangedFiles:   plan.ChangedPathCount,
 		SchemaVersion:  meta.SchemaVersion,
 		RepodexVersion: meta.RepodexVersion,
 	}
 	applyGitInfo(&resp, gitInfo)
 	resp.SyncPlan = plan
-	if gitInfo.Repo && plan != nil {
-		resp.Dirty = plan.Mode != "noop"
-		resp.ChangedFiles = plan.ChangedPathCount
-		if resp.ChangedFiles == 0 && resp.Dirty && changed > 0 {
-			resp.ChangedFiles = changed
-		}
-	}
 	return resp, nil
 }
 
@@ -435,6 +399,10 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 }
 
 func runServeStdio(root string) error {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return err
+	}
 	statusFn := func() (interface{}, error) {
 		return computeStatus(root)
 	}
@@ -448,6 +416,10 @@ func runServeStdio(root string) error {
 }
 
 func runSearch(root string, q string, topK int) error {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return err
+	}
 	if q == "" {
 		return fmt.Errorf("query cannot be empty")
 	}
@@ -460,6 +432,10 @@ func runSearch(root string, q string, topK int) error {
 }
 
 func runFetch(root string, ids []uint32, maxLines int) error {
+	root, err := resolveRepoRoot(root)
+	if err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return fmt.Errorf("at least one id is required")
 	}
@@ -481,4 +457,12 @@ func currentRepoHead(root string) string {
 		return ""
 	}
 	return head
+}
+
+func resolveRepoRoot(start string) (string, error) {
+	root, err := gitx.TopLevel(start)
+	if err != nil {
+		return "", fmt.Errorf("repodex requires a git repository")
+	}
+	return root, nil
 }

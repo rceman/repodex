@@ -1,22 +1,30 @@
 # StatusResponse and SyncPlan compatibility
 
-StatusResponse preserves existing fields for backward compatibility:
+Repodex requires a git repository and resolves the working root via `git rev-parse --show-toplevel`. For git repositories, `dirty` and `changed_files` are derived from `sync_plan` (indexable TS/TSX paths). Outside git, commands return an error instead of a StatusResponse. If index artifacts are missing, `sync_plan.why` is `missing_index` and a full sync is required.
 
-- `indexed`, `indexed_at_unix`, `file_count`, `chunk_count`, `term_count`, `dirty`, `changed_files` remain stable.
-- New fields are optional and may be omitted: `git_*`, `sync_plan`, `schema_version`, `repodex_version`.
-- Clients should ignore unknown fields and must not require the presence of new fields.
+StatusResponse compatibility contract
 
-Git vs non-git behavior:
+- Stable fields (always present, stable semantics and types): `indexed`, `indexed_at_unix`, `file_count`, `chunk_count`, `term_count`, `dirty`, `changed_files`.
+- Optional extension fields (omitempty): `sync_plan`, `schema_version`, `repodex_version`, all `git_*` fields (including legacy ones).
+- Deprecated but preserved legacy fields: `git_repo`, `repo_head`, `current_head`, `worktree_clean`, `head_matches`, `git_dirty_path_count`, `git_dirty_repodex_only` (clients should treat them as optional).
+- Client rules: ignore unknown fields; do not require `sync_plan`; if `sync_plan` is absent, treat the reason as `unknown`.
 
-- For git repositories, `dirty` and `changed_files` are derived from `sync_plan` and reflect git-detected, indexable path changes (TS/TSX only). Filesystem mtime/size comparisons are not used.
-- For non-git repositories, `dirty`/`changed_files` use filesystem comparison (mtime/size). `sync_plan.why` is `not_git_repo`.
-- For missing index artifacts, `sync_plan.why` is `missing_index` and a full sync is required.
+Git alignment rules
+
+- For git repositories, `dirty` must align with `sync_plan.mode != noop` (except the `.repodex`-only case where `why = git_changed_non_indexable` allows `mode = noop`, `dirty = false`).
+- For git repositories, `changed_files` equals `sync_plan.changed_path_count` (indexable changes).
+
+Canonical `sync_plan.mode` values:
+
+- `full`
+- `noop`
+- `incremental` (reserved)
 
 Canonical `sync_plan.why` values:
 
 - `up_to_date`
 - `missing_index`
-- `not_git_repo`
+- `not_git_repo` (reserved for compatibility; git-only mode may not emit this)
 - `schema_changed`
 - `config_changed`
 - `git_head_changed`
@@ -24,10 +32,3 @@ Canonical `sync_plan.why` values:
 - `git_head_and_worktree_changed`
 - `git_changed_non_indexable`
 - `unknown`
-
-When the plan is absent, clients should treat the reason as `unknown`.
-
-Deprecated / backward-compatible fields:
-
-- Legacy git fields (`git_repo`, `repo_head`, `current_head`, `worktree_clean`, `head_matches`, `git_dirty_path_count`, `git_dirty_repodex_only`) remain for compatibility but may be omitted for non-git roots.
-- New fields are optional (omitempty); clients must ignore unknown fields and should not rely on their presence.
