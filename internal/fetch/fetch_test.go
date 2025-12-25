@@ -182,3 +182,50 @@ func TestFetchCRLF(t *testing.T) {
 		t.Fatalf("unexpected line formatting with CRLF: first=%q last=%q", got.Lines[0], got.Lines[2])
 	}
 }
+
+func TestResolvePathRejectsDotDotSegment(t *testing.T) {
+	root := t.TempDir()
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("eval symlinks failed: %v", err)
+	}
+
+	// Even if the cleaned result would be within root, the plan requires rejecting
+	// any explicit ".." traversal segment.
+	_, err = resolvePath(rootReal, "a/../b.ts")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "path traversal detected") {
+		t.Fatalf("expected traversal error, got: %v", err)
+	}
+}
+
+func TestResolvePathRejectsVariousDotDotForms(t *testing.T) {
+	root := t.TempDir()
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("eval symlinks failed: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "leading dotdot", path: "../b.ts"},
+		{name: "multiple dotdot", path: "a/../../b.ts"},
+		{name: "backslash dotdot", path: "a\\..\\b.ts"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := resolvePath(rootReal, tc.path)
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "path traversal detected") {
+				t.Fatalf("expected traversal error, got: %v", err)
+			}
+		})
+	}
+}
