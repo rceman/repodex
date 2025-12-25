@@ -22,6 +22,15 @@ type GitInfo struct {
 	ChangedReason    string
 }
 
+// Git changed reasons (enum-like).
+const (
+	GitChangedNone            = "none"
+	GitChangedWorktree        = "worktree"
+	GitChangedHead            = "head"
+	GitChangedHeadAndWorktree = "head+worktree"
+	GitChangedUnknown         = "unknown"
+)
+
 type SyncPlan struct {
 	Mode             string   `json:"mode"` // see Mode* constants
 	BaseHead         string   `json:"base_head,omitempty"`
@@ -73,6 +82,15 @@ func IsValidMode(mode string) bool {
 	}
 }
 
+func IsValidGitChangedReason(v string) bool {
+	switch v {
+	case "", GitChangedNone, GitChangedWorktree, GitChangedHead, GitChangedHeadAndWorktree, GitChangedUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
 func IsValidWhy(why string) bool {
 	switch why {
 	case "", WhyUpToDate, WhyMissingIndex, WhyNotGitRepo, WhySchemaChanged, WhyConfigChanged,
@@ -91,7 +109,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	}
 	isRepo, err := gitx.IsRepo(root)
 	if err != nil {
-		info.ChangedReason = WhyUnknown
+		info.ChangedReason = GitChangedUnknown
 		return info
 	}
 	if !isRepo {
@@ -104,14 +122,14 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 
 	head, err := gitx.Head(root)
 	if err != nil {
-		info.ChangedReason = WhyUnknown
+		info.ChangedReason = GitChangedUnknown
 		return info
 	}
 	info.CurrentHead = head
 
 	clean, err := gitx.IsWorkTreeClean(root)
 	if err != nil {
-		info.ChangedReason = WhyUnknown
+		info.ChangedReason = GitChangedUnknown
 		return info
 	}
 	info.WorktreeClean = clean
@@ -121,7 +139,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	if !info.WorktreeClean {
 		paths, err := gitx.StatusChangedPaths(root)
 		if err != nil {
-			info.ChangedReason = WhyUnknown
+			info.ChangedReason = GitChangedUnknown
 			return info
 		}
 		info.DirtyPathCount = len(paths)
@@ -153,21 +171,21 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	info.ChangedPathCount = len(changedSet)
 	info.ChangedPaths = sortedLimitedPaths(changedSet, MaxChangedPaths)
 	if gitErr {
-		info.ChangedReason = WhyUnknown
+		info.ChangedReason = GitChangedUnknown
 		return info
 	}
 	worktreeChanged := !info.WorktreeClean
 	switch {
 	case !headChanged && !worktreeChanged && info.ChangedPathCount == 0:
-		info.ChangedReason = "none"
+		info.ChangedReason = GitChangedNone
 	case !headChanged && worktreeChanged:
-		info.ChangedReason = "worktree"
+		info.ChangedReason = GitChangedWorktree
 	case headChanged && !worktreeChanged:
-		info.ChangedReason = "head"
+		info.ChangedReason = GitChangedHead
 	case headChanged && worktreeChanged:
-		info.ChangedReason = "head+worktree"
+		info.ChangedReason = GitChangedHeadAndWorktree
 	default:
-		info.ChangedReason = WhyUnknown
+		info.ChangedReason = GitChangedUnknown
 	}
 	return info
 }
@@ -186,7 +204,7 @@ func BuildSyncPlan(meta store.Meta, cfgHash uint64, info GitInfo) *SyncPlan {
 		plan.Why = WhyNotGitRepo
 		return plan
 	}
-	if info.ChangedReason == WhyUnknown {
+	if info.ChangedReason == GitChangedUnknown {
 		plan.Why = WhyUnknown
 		return plan
 	}
