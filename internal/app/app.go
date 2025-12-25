@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/memkit/repodex/internal/cli"
 	"github.com/memkit/repodex/internal/config"
@@ -18,6 +17,7 @@ import (
 	"github.com/memkit/repodex/internal/scan"
 	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/serve"
+	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
 )
 
@@ -31,19 +31,28 @@ type StatusResponse struct {
 	Dirty         bool  `json:"dirty"`
 	ChangedFiles  int   `json:"changed_files"`
 
-	// Git-related diagnostics (helpful for clients such as Codex).
-	GitRepo       bool   `json:"git_repo,omitempty"`
-	RepoHead      string `json:"repo_head,omitempty"`
-	CurrentHead   string `json:"current_head,omitempty"`
-	WorktreeClean bool   `json:"worktree_clean,omitempty"`
-	HeadMatches   bool   `json:"head_matches,omitempty"`
+	// Legacy git fields (prefer GitBaseHead/GitCurrentHead/GitChanged*).
+	GitRepo       bool   `json:"git_repo,omitempty"`       // Deprecated: use GitBaseHead/GitCurrentHead.
+	RepoHead      string `json:"repo_head,omitempty"`      // Deprecated: use GitBaseHead.
+	CurrentHead   string `json:"current_head,omitempty"`   // Deprecated: use GitCurrentHead.
+	WorktreeClean bool   `json:"worktree_clean,omitempty"` // Deprecated: use GitWorktreeClean.
+	HeadMatches   bool   `json:"head_matches,omitempty"`   // Deprecated: compare GitBaseHead vs GitCurrentHead.
 
-	// Git status diagnostics (useful for reminding to commit the index).
+	// Git status diagnostics (useful for reminding to commit the index). Kept for backward compatibility.
 	GitDirtyPathCount   int  `json:"git_dirty_path_count,omitempty"`
 	GitDirtyRepodexOnly bool `json:"git_dirty_repodex_only,omitempty"`
 
 	SchemaVersion  int    `json:"schema_version,omitempty"`
 	RepodexVersion string `json:"repodex_version,omitempty"`
+
+	GitBaseHead         string            `json:"git_base_head,omitempty"`
+	GitCurrentHead      string            `json:"git_current_head,omitempty"`
+	GitWorktreeClean    bool              `json:"git_worktree_clean,omitempty"`
+	GitChangedPathCount int               `json:"git_changed_path_count,omitempty"`
+	GitChangedPaths     []string          `json:"git_changed_paths,omitempty"`
+	GitChangedReason    string            `json:"git_changed_reason,omitempty"`
+	GitChangedIndexable bool              `json:"git_changed_indexable,omitempty"`
+	SyncPlan            *statusx.SyncPlan `json:"sync_plan,omitempty"`
 }
 
 // Run executes the CLI app and returns an exit code.
@@ -154,6 +163,12 @@ func runInit(root string, force bool) error {
 }
 
 func runIndexSync(root string) error {
+	if st, err := computeStatus(root); err == nil {
+		if st.SyncPlan != nil && st.SyncPlan.Mode == "noop" {
+			return nil
+		}
+	}
+
 	cfgPath := store.ConfigPath(root)
 	cfg, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
@@ -214,6 +229,12 @@ func outputStatus(resp StatusResponse, jsonOut bool) error {
 	} else if resp.GitRepo && !resp.WorktreeClean {
 		fmt.Printf("Git: working tree dirty (%d paths)\n", resp.GitDirtyPathCount)
 	}
+	if resp.SyncPlan != nil {
+		fmt.Printf("Sync plan: mode=%s, why=%s\n", resp.SyncPlan.Mode, resp.SyncPlan.Why)
+		if resp.SyncPlan.Why == "git_changed_non_indexable" && resp.GitDirtyRepodexOnly {
+			fmt.Printf("Note: repo dirty only due to .repodex; commit index artifacts for portability.\n")
+		}
+	}
 	return nil
 }
 
@@ -258,7 +279,14 @@ func computeStatus(root string) (StatusResponse, error) {
 	}
 
 	if !metaExists || !filesExists || !chunksExists || !termsExists || !postingsExists {
-		return StatusResponse{
+		var meta store.Meta
+		if metaExists {
+			if loaded, err := store.LoadMeta(metaPath); err == nil {
+				meta = loaded
+			}
+		}
+		gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+		resp := StatusResponse{
 			Indexed:       false,
 			IndexedAtUnix: 0,
 			FileCount:     0,
@@ -266,75 +294,53 @@ func computeStatus(root string) (StatusResponse, error) {
 			TermCount:     0,
 			Dirty:         true,
 			ChangedFiles:  0,
-		}, nil
+		}
+		applyGitInfo(&resp, gitInfo)
+		resp.SyncPlan = &statusx.SyncPlan{
+			Mode:             "full",
+			Why:              "missing_index",
+			BaseHead:         gitInfo.BaseHead,
+			CurrentHead:      gitInfo.CurrentHead,
+			WorktreeClean:    gitInfo.WorktreeClean,
+			ChangedPaths:     gitInfo.ChangedPaths,
+			ChangedPathCount: gitInfo.ChangedPathCount,
+		}
+		resp.Dirty = resp.SyncPlan.Mode != "noop"
+		if gitInfo.Repo {
+			resp.ChangedFiles = resp.SyncPlan.ChangedPathCount
+		}
+		return resp, nil
 	}
 
 	meta, err := store.LoadMeta(metaPath)
 	if err != nil {
 		return StatusResponse{}, err
 	}
+
+	gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+
 	cfg, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
 		return StatusResponse{}, err
 	}
 	cfgHash := hash.Sum64(cfgBytes)
 
-	// Collect git diagnostics once; do not fail status on git errors.
-	gitRepo := false
-	currentHead := ""
-	worktreeClean := false
-	gitDirtyPathCount := 0
-	gitDirtyRepodexOnly := false
-	if isRepo, err := gitx.IsRepo(root); err == nil && isRepo {
-		gitRepo = true
-		if head, err := gitx.Head(root); err == nil {
-			currentHead = head
+	plan := statusx.BuildSyncPlan(meta, cfgHash, gitInfo)
+	if gitInfo.Repo {
+		resp := StatusResponse{
+			Indexed:        true,
+			IndexedAtUnix:  meta.IndexedAtUnix,
+			FileCount:      meta.FileCount,
+			ChunkCount:     meta.ChunkCount,
+			TermCount:      meta.TermCount,
+			Dirty:          plan.Mode != "noop",
+			ChangedFiles:   plan.ChangedPathCount,
+			SchemaVersion:  meta.SchemaVersion,
+			RepodexVersion: meta.RepodexVersion,
 		}
-		if clean, err := gitx.IsWorkTreeClean(root); err == nil {
-			worktreeClean = clean
-		}
-		if !worktreeClean {
-			if paths, err := gitx.StatusChangedPaths(root); err == nil {
-				gitDirtyPathCount = len(paths)
-				if len(paths) > 0 {
-					repodexOnly := true
-					for _, p := range paths {
-						// p uses forward slashes from git.
-						if p == ".repodex" || strings.HasPrefix(p, ".repodex/") {
-							continue
-						}
-						repodexOnly = false
-						break
-					}
-					gitDirtyRepodexOnly = repodexOnly
-				}
-			}
-		}
-	}
-	headMatches := gitRepo && currentHead != "" && meta.RepoHead != "" && currentHead == meta.RepoHead
-
-	if meta.SchemaVersion == store.SchemaVersion && meta.ConfigHash == cfgHash {
-		if headMatches && worktreeClean {
-			return StatusResponse{
-				Indexed:       true,
-				IndexedAtUnix: meta.IndexedAtUnix,
-				FileCount:     meta.FileCount,
-				ChunkCount:    meta.ChunkCount,
-				TermCount:     meta.TermCount,
-				Dirty:         false,
-				ChangedFiles:  0,
-
-				GitRepo:             gitRepo,
-				RepoHead:            meta.RepoHead,
-				CurrentHead:         currentHead,
-				WorktreeClean:       worktreeClean,
-				HeadMatches:         headMatches,
-				GitDirtyPathCount:   gitDirtyPathCount,
-				GitDirtyRepodexOnly: gitDirtyRepodexOnly,
-				SchemaVersion:       meta.SchemaVersion,
-				RepodexVersion:      meta.RepodexVersion,
-			}, nil
-		}
+		applyGitInfo(&resp, gitInfo)
+		resp.SyncPlan = plan
+		return resp, nil
 	}
 
 	var ignoreDirs []string
@@ -381,25 +387,51 @@ func computeStatus(root string) (StatusResponse, error) {
 		}
 	}
 
-	return StatusResponse{
-		Indexed:       true,
-		IndexedAtUnix: meta.IndexedAtUnix,
-		FileCount:     meta.FileCount,
-		ChunkCount:    meta.ChunkCount,
-		TermCount:     meta.TermCount,
-		Dirty:         changed > 0,
-		ChangedFiles:  changed,
+	resp := StatusResponse{
+		Indexed:        true,
+		IndexedAtUnix:  meta.IndexedAtUnix,
+		FileCount:      meta.FileCount,
+		ChunkCount:     meta.ChunkCount,
+		TermCount:      meta.TermCount,
+		Dirty:          changed > 0,
+		ChangedFiles:   changed,
+		SchemaVersion:  meta.SchemaVersion,
+		RepodexVersion: meta.RepodexVersion,
+	}
+	applyGitInfo(&resp, gitInfo)
+	resp.SyncPlan = plan
+	if gitInfo.Repo && plan != nil {
+		resp.Dirty = plan.Mode != "noop"
+		resp.ChangedFiles = plan.ChangedPathCount
+		if resp.ChangedFiles == 0 && resp.Dirty && changed > 0 {
+			resp.ChangedFiles = changed
+		}
+	}
+	return resp, nil
+}
 
-		GitRepo:             gitRepo,
-		RepoHead:            meta.RepoHead,
-		CurrentHead:         currentHead,
-		WorktreeClean:       worktreeClean,
-		HeadMatches:         headMatches,
-		GitDirtyPathCount:   gitDirtyPathCount,
-		GitDirtyRepodexOnly: gitDirtyRepodexOnly,
-		SchemaVersion:       meta.SchemaVersion,
-		RepodexVersion:      meta.RepodexVersion,
-	}, nil
+func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
+	resp.GitRepo = info.Repo
+	resp.RepoHead = info.BaseHead
+	resp.CurrentHead = info.CurrentHead
+	resp.WorktreeClean = info.WorktreeClean
+	resp.HeadMatches = info.Repo && info.BaseHead != "" && info.CurrentHead != "" && info.BaseHead == info.CurrentHead
+	resp.GitDirtyPathCount = info.DirtyPathCount
+	resp.GitDirtyRepodexOnly = info.DirtyRepodexOnly
+	resp.GitBaseHead = info.BaseHead
+	resp.GitCurrentHead = info.CurrentHead
+	resp.GitWorktreeClean = info.WorktreeClean
+	resp.GitChangedPathCount = info.ChangedPathCount
+	resp.GitChangedPaths = info.ChangedPaths
+	resp.GitChangedReason = info.ChangedReason
+	resp.GitChangedIndexable = info.Repo && info.ChangedPathCount > 0
+	// For non-git repos, keep git_* fields empty; SyncPlan explains not_git_repo.
+	if !info.Repo {
+		resp.GitChangedReason = ""
+		resp.GitChangedPaths = nil
+		resp.GitChangedPathCount = 0
+		resp.GitChangedIndexable = false
+	}
 }
 
 func runServeStdio(root string) error {

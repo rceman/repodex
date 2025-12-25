@@ -98,3 +98,24 @@ func StatusChangedPaths(root string) ([]string, error) {
 	}
 	return paths, nil
 }
+
+// DiffNameOnly returns the set of paths changed between two commits/refs.
+func DiffNameOnly(root, a, b string) ([]string, error) {
+	out, err := runGit(root, "diff", "--name-only", a, b)
+	if err != nil {
+		if isGitUnavailable(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var paths []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		paths = append(paths, line)
+	}
+	return paths, nil
+}

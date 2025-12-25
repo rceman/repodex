@@ -77,6 +77,68 @@ func TestComputeStatusMissingIndexArtifact(t *testing.T) {
 	}
 }
 
+func TestComputeStatusMissingIndexHasSyncPlan(t *testing.T) {
+	root := t.TempDir()
+
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
+	}
+
+	resp, err := computeStatus(root)
+	if err != nil {
+		t.Fatalf("computeStatus returned error: %v", err)
+	}
+	if resp.Indexed {
+		t.Fatalf("expected Indexed=false for missing index artifacts")
+	}
+	if resp.SyncPlan == nil {
+		t.Fatalf("expected SyncPlan to be present when index is missing")
+	}
+	if resp.SyncPlan.Mode != "full" {
+		t.Fatalf("expected SyncPlan mode=full for missing index, got %s", resp.SyncPlan.Mode)
+	}
+	if resp.SyncPlan.Why != "missing_index" {
+		t.Fatalf("expected SyncPlan why=missing_index, got %s", resp.SyncPlan.Why)
+	}
+}
+
+func TestComputeStatusNonGitUsesFilesystemDiff(t *testing.T) {
+	root := t.TempDir()
+
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
+	}
+
+	content := "const a = 1;\n"
+	srcPath := filepath.Join(root, "sample.ts")
+	if err := os.WriteFile(srcPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write source file: %v", err)
+	}
+
+	if err := runIndexSync(root); err != nil {
+		t.Fatalf("runIndexSync failed: %v", err)
+	}
+
+	// Modify file to trigger mtime/size change.
+	if err := os.WriteFile(srcPath, []byte("const a = 2; // change\n"), 0o644); err != nil {
+		t.Fatalf("failed to modify source file: %v", err)
+	}
+
+	resp, err := computeStatus(root)
+	if err != nil {
+		t.Fatalf("computeStatus returned error: %v", err)
+	}
+	if resp.SyncPlan == nil || resp.SyncPlan.Why != "not_git_repo" {
+		t.Fatalf("expected SyncPlan why=not_git_repo, got %#v", resp.SyncPlan)
+	}
+	if !resp.Dirty {
+		t.Fatalf("expected Dirty=true after filesystem change in non-git repo")
+	}
+	if resp.ChangedFiles == 0 {
+		t.Fatalf("expected ChangedFiles>0 for non-git filesystem change")
+	}
+}
+
 func TestComputeStatusCRLFFileNotDirtyAfterSync(t *testing.T) {
 	root := t.TempDir()
 
