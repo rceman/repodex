@@ -94,8 +94,17 @@ func TestComputeStatusMissingIndexHasSyncPlan(t *testing.T) {
 func TestComputeStatusNonGitUsesFilesystemDiff(t *testing.T) {
 	root := t.TempDir()
 
-	if err := runInit(root, false); err == nil {
-		t.Fatalf("expected runInit to fail outside git repo")
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	if code := Run([]string{"init"}); code == 0 {
+		t.Fatalf("expected Run(init) to fail outside git repo")
 	}
 
 	resp, err := computeStatus(root)
@@ -217,6 +226,76 @@ func TestComputeStatusSkipsFastPathWhenGitDirty(t *testing.T) {
 	}
 	if resp.ChangedFiles == 0 {
 		t.Fatalf("expected ChangedFiles to be greater than 0 for dirty git repo")
+	}
+}
+
+func TestCommandsFromSubdirUseRepoRoot(t *testing.T) {
+	root := setupGitRepo(t, true)
+
+	sub := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	samplePath := filepath.Join(sub, "sample.ts")
+	if err := os.WriteFile(samplePath, []byte("const sample = 1;\n"), 0o644); err != nil {
+		t.Fatalf("failed to write sample: %v", err)
+	}
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(sub); err != nil {
+		t.Fatalf("chdir to subdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	if code := Run([]string{"init"}); code != 0 {
+		t.Fatalf("Run(init) from subdir failed with code %d", code)
+	}
+	if code := Run([]string{"sync"}); code != 0 {
+		t.Fatalf("Run(sync) from subdir failed with code %d", code)
+	}
+
+	resp, err := computeStatus(sub)
+	if err != nil {
+		t.Fatalf("computeStatus from subdir returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".repodex", "config.json")); err != nil {
+		t.Fatalf("expected .repodex/config.json in repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sub, ".repodex")); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("expected no .repodex directory in subdir, got err=%v", err)
+	}
+
+	if _, err := os.Stat(store.FilesPath(root)); err != nil {
+		t.Fatalf("expected files.dat in repo root: %v", err)
+	}
+	if _, err := os.Stat(store.ChunksPath(root)); err != nil {
+		t.Fatalf("expected chunks.dat in repo root: %v", err)
+	}
+	if _, err := os.Stat(store.TermsPath(root)); err != nil {
+		t.Fatalf("expected terms.dat in repo root: %v", err)
+	}
+	if _, err := os.Stat(store.PostingsPath(root)); err != nil {
+		t.Fatalf("expected postings.dat in repo root: %v", err)
+	}
+
+	if !resp.GitRepo {
+		t.Fatalf("expected GitRepo=true from subdir")
+	}
+	if resp.SyncPlan == nil {
+		t.Fatalf("expected SyncPlan to be present from subdir")
+	}
+	if resp.SyncPlan != nil {
+		if !statusx.IsValidMode(resp.SyncPlan.Mode) {
+			t.Fatalf("invalid sync plan mode from subdir: %s", resp.SyncPlan.Mode)
+		}
+		if !statusx.IsValidWhy(resp.SyncPlan.Why) {
+			t.Fatalf("invalid sync plan why from subdir: %s", resp.SyncPlan.Why)
+		}
 	}
 }
 

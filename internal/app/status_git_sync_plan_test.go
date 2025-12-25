@@ -172,6 +172,9 @@ func statusMust(t *testing.T, root string) StatusResponse {
 	if err != nil {
 		t.Fatalf("computeStatus returned error: %v", err)
 	}
+	if !statusx.IsValidGitChangedReason(resp.GitChangedReason) {
+		t.Fatalf("invalid git changed reason: %s", resp.GitChangedReason)
+	}
 	if resp.SyncPlan != nil {
 		if !statusx.IsValidMode(resp.SyncPlan.Mode) {
 			t.Fatalf("invalid sync plan mode: %s", resp.SyncPlan.Mode)

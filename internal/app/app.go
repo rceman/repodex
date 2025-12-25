@@ -44,11 +44,12 @@ type StatusResponse struct {
 	SchemaVersion  int    `json:"schema_version,omitempty"`
 	RepodexVersion string `json:"repodex_version,omitempty"`
 
-	GitBaseHead         string            `json:"git_base_head,omitempty"`
-	GitCurrentHead      string            `json:"git_current_head,omitempty"`
-	GitWorktreeClean    bool              `json:"git_worktree_clean,omitempty"`
-	GitChangedPathCount int               `json:"git_changed_path_count,omitempty"`
-	GitChangedPaths     []string          `json:"git_changed_paths,omitempty"`
+	GitBaseHead         string   `json:"git_base_head,omitempty"`
+	GitCurrentHead      string   `json:"git_current_head,omitempty"`
+	GitWorktreeClean    bool     `json:"git_worktree_clean,omitempty"`
+	GitChangedPathCount int      `json:"git_changed_path_count,omitempty"`
+	GitChangedPaths     []string `json:"git_changed_paths,omitempty"`
+	// GitChangedReason is a git-domain signal (not a SyncPlan why).
 	GitChangedReason    string            `json:"git_changed_reason,omitempty"`
 	GitChangedIndexable bool              `json:"git_changed_indexable,omitempty"`
 	SyncPlan            *statusx.SyncPlan `json:"sync_plan,omitempty"`
@@ -129,11 +130,6 @@ func Run(args []string) int {
 }
 
 func runInit(root string, force bool) error {
-	root, err := resolveRepoRoot(root)
-	if err != nil {
-		return err
-	}
-
 	dir := store.Dir(root)
 	if !force {
 		if _, err := os.Stat(dir); err == nil {
@@ -173,12 +169,7 @@ func runInit(root string, force bool) error {
 }
 
 func runIndexSync(root string) error {
-	root, err := resolveRepoRoot(root)
-	if err != nil {
-		return err
-	}
-
-	if st, err := computeStatus(root); err == nil {
+	if st, err := computeStatusResolved(root); err == nil {
 		if st.SyncPlan != nil && st.SyncPlan.Mode == statusx.ModeNoop {
 			return nil
 		}
@@ -226,12 +217,7 @@ func runIndexSync(root string) error {
 }
 
 func runStatus(root string, jsonOut bool) error {
-	root, err := resolveRepoRoot(root)
-	if err != nil {
-		return err
-	}
-
-	resp, err := computeStatus(root)
+	resp, err := computeStatusResolved(root)
 	if err != nil {
 		return err
 	}
@@ -269,12 +255,15 @@ func fileExistsOk(path string) (bool, error) {
 	return true, nil
 }
 
-func computeStatus(root string) (StatusResponse, error) {
-	root, err := resolveRepoRoot(root)
+func computeStatus(start string) (StatusResponse, error) {
+	root, err := resolveRepoRoot(start)
 	if err != nil {
 		return StatusResponse{}, err
 	}
+	return computeStatusResolved(root)
+}
 
+func computeStatusResolved(root string) (StatusResponse, error) {
 	metaPath := store.MetaPath(root)
 	filesPath := store.FilesPath(root)
 	chunksPath := store.ChunksPath(root)
@@ -399,27 +388,19 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 }
 
 func runServeStdio(root string) error {
-	root, err := resolveRepoRoot(root)
-	if err != nil {
-		return err
-	}
 	statusFn := func() (interface{}, error) {
-		return computeStatus(root)
+		return computeStatusResolved(root)
 	}
 	syncFn := func() (interface{}, error) {
 		if err := runIndexSync(root); err != nil {
 			return nil, err
 		}
-		return computeStatus(root)
+		return computeStatusResolved(root)
 	}
 	return serve.ServeStdio(root, statusFn, syncFn)
 }
 
 func runSearch(root string, q string, topK int) error {
-	root, err := resolveRepoRoot(root)
-	if err != nil {
-		return err
-	}
 	if q == "" {
 		return fmt.Errorf("query cannot be empty")
 	}
@@ -432,10 +413,6 @@ func runSearch(root string, q string, topK int) error {
 }
 
 func runFetch(root string, ids []uint32, maxLines int) error {
-	root, err := resolveRepoRoot(root)
-	if err != nil {
-		return err
-	}
 	if len(ids) == 0 {
 		return fmt.Errorf("at least one id is required")
 	}
