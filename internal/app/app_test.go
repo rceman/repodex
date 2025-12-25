@@ -1,12 +1,16 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/memkit/repodex/internal/cachex"
+	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
 )
@@ -296,6 +300,78 @@ func TestCommandsFromSubdirUseRepoRoot(t *testing.T) {
 		if !statusx.IsValidWhy(resp.SyncPlan.Why) {
 			t.Fatalf("invalid sync plan why from subdir: %s", resp.SyncPlan.Why)
 		}
+	}
+}
+
+func TestIncrementalSyncDoesNotReadUnchangedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+	requireGit(t)
+
+	root := t.TempDir()
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.com")
+	runGit(t, root, "config", "user.name", "Test User")
+
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("file%d.ts", i)
+		content := fmt.Sprintf("export const value%d = %d;\n", i, i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial files")
+
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
+	}
+	if err := runIndexSync(root); err != nil {
+		t.Fatalf("initial sync failed: %v", err)
+	}
+
+	readonly := []string{"file2.ts", "file3.ts"}
+	for _, rel := range readonly {
+		p := filepath.Join(root, rel)
+		if err := os.Chmod(p, 0o000); err != nil {
+			t.Fatalf("chmod %s: %v", rel, err)
+		}
+		t.Cleanup(func(path string) func() {
+			return func() { _ = os.Chmod(path, 0o644) }
+		}(p))
+	}
+
+	first := filepath.Join(root, "file1.ts")
+	if err := os.WriteFile(first, []byte("export const value1 = 42;\n"), 0o644); err != nil {
+		t.Fatalf("modify file1: %v", err)
+	}
+
+	if err := runIndexSync(root); err != nil {
+		t.Fatalf("incremental sync failed: %v", err)
+	}
+
+	cacheFiles, err := filepath.Glob(filepath.Join(cachex.CacheDir(root), "*.json"))
+	if err != nil {
+		t.Fatalf("glob cache: %v", err)
+	}
+	entryCount := 0
+	for _, p := range cacheFiles {
+		if filepath.Base(p) == "meta.json" {
+			continue
+		}
+		entryCount++
+	}
+	if entryCount == 0 {
+		t.Fatalf("expected per-file cache entries to be created")
+	}
+
+	results, err := search.Search(root, "value1", search.Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("expected search results after incremental sync")
 	}
 }
 
