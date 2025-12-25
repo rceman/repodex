@@ -104,6 +104,7 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 - config + language plugin (project type selection)
 - `chunks` (metadata and snippet)
 - `terms` + `postings`
+- note: the search path does not need `files` metadata; file paths are taken from the chunk entries
 
 ### Query tokenization
 - Tokenize the query using the same TS plugin tokenizer rules as indexing:

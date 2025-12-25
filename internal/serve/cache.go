@@ -85,5 +85,22 @@ func (c *IndexCache) Invalidate() {
 func (c *IndexCache) Get() (config.Config, []byte, lang.LanguagePlugin, []index.ChunkEntry, map[uint32]index.ChunkEntry, map[string]index.TermInfo, []uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.cfg, c.cfgBytes, c.plugin, c.chunks, c.chunkMap, c.terms, c.postings
+
+	cfgCopy := c.cfg
+	cfgBytesCopy := make([]byte, len(c.cfgBytes))
+	copy(cfgBytesCopy, c.cfgBytes)
+	chunksCopy := make([]index.ChunkEntry, len(c.chunks))
+	copy(chunksCopy, c.chunks)
+	chunkMapCopy := make(map[uint32]index.ChunkEntry, len(c.chunkMap))
+	for k, v := range c.chunkMap {
+		chunkMapCopy[k] = v
+	}
+	termsCopy := make(map[string]index.TermInfo, len(c.terms))
+	for k, v := range c.terms {
+		termsCopy[k] = v
+	}
+	postingsCopy := make([]uint32, len(c.postings))
+	copy(postingsCopy, c.postings)
+
+	return cfgCopy, cfgBytesCopy, c.plugin, chunksCopy, chunkMapCopy, termsCopy, postingsCopy
 }
