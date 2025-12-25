@@ -23,24 +23,64 @@ type GitInfo struct {
 }
 
 type SyncPlan struct {
-	Mode             string   `json:"mode"` // "full" | "noop" | "incremental"
+	Mode             string   `json:"mode"` // see Mode* constants
 	BaseHead         string   `json:"base_head,omitempty"`
 	CurrentHead      string   `json:"current_head,omitempty"`
 	WorktreeClean    bool     `json:"worktree_clean,omitempty"`
 	ChangedPaths     []string `json:"changed_paths,omitempty"`
 	ChangedPathCount int      `json:"changed_path_count,omitempty"`
 	// Canonical Stage 2 reasons:
-	// - "up_to_date"
-	// - "missing_index"
-	// - "not_git_repo"
-	// - "schema_changed"
-	// - "config_changed"
-	// - "git_head_changed"
-	// - "git_worktree_changed"
-	// - "git_head_and_worktree_changed"
-	// - "git_changed_non_indexable"
-	// - "unknown"
+	// - WhyUpToDate
+	// - WhyMissingIndex
+	// - WhyNotGitRepo
+	// - WhySchemaChanged
+	// - WhyConfigChanged
+	// - WhyGitHeadChanged
+	// - WhyGitWorktreeChanged
+	// - WhyGitHeadAndWorktreeChanged
+	// - WhyGitChangedNonIndexable
+	// - WhyUnknown
 	Why string `json:"why,omitempty"`
+}
+
+// SyncPlan modes (enum-like).
+const (
+	ModeFull        = "full"
+	ModeNoop        = "noop"
+	ModeIncremental = "incremental" // reserved for future use
+)
+
+// SyncPlan reasons (enum-like).
+const (
+	WhyUpToDate                  = "up_to_date"
+	WhyMissingIndex              = "missing_index"
+	WhyNotGitRepo                = "not_git_repo" // reserved for compatibility; git-only mode may not emit this.
+	WhySchemaChanged             = "schema_changed"
+	WhyConfigChanged             = "config_changed"
+	WhyGitHeadChanged            = "git_head_changed"
+	WhyGitWorktreeChanged        = "git_worktree_changed"
+	WhyGitHeadAndWorktreeChanged = "git_head_and_worktree_changed"
+	WhyGitChangedNonIndexable    = "git_changed_non_indexable"
+	WhyUnknown                   = "unknown"
+)
+
+func IsValidMode(mode string) bool {
+	switch mode {
+	case ModeFull, ModeNoop, ModeIncremental:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsValidWhy(why string) bool {
+	switch why {
+	case "", WhyUpToDate, WhyMissingIndex, WhyNotGitRepo, WhySchemaChanged, WhyConfigChanged,
+		WhyGitHeadChanged, WhyGitWorktreeChanged, WhyGitHeadAndWorktreeChanged, WhyGitChangedNonIndexable, WhyUnknown:
+		return true
+	default:
+		return false
+	}
 }
 
 const MaxChangedPaths = 200
@@ -51,7 +91,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	}
 	isRepo, err := gitx.IsRepo(root)
 	if err != nil {
-		info.ChangedReason = "unknown"
+		info.ChangedReason = WhyUnknown
 		return info
 	}
 	if !isRepo {
@@ -64,14 +104,14 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 
 	head, err := gitx.Head(root)
 	if err != nil {
-		info.ChangedReason = "unknown"
+		info.ChangedReason = WhyUnknown
 		return info
 	}
 	info.CurrentHead = head
 
 	clean, err := gitx.IsWorkTreeClean(root)
 	if err != nil {
-		info.ChangedReason = "unknown"
+		info.ChangedReason = WhyUnknown
 		return info
 	}
 	info.WorktreeClean = clean
@@ -81,7 +121,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	if !info.WorktreeClean {
 		paths, err := gitx.StatusChangedPaths(root)
 		if err != nil {
-			info.ChangedReason = "unknown"
+			info.ChangedReason = WhyUnknown
 			return info
 		}
 		info.DirtyPathCount = len(paths)
@@ -113,7 +153,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	info.ChangedPathCount = len(changedSet)
 	info.ChangedPaths = sortedLimitedPaths(changedSet, MaxChangedPaths)
 	if gitErr {
-		info.ChangedReason = "unknown"
+		info.ChangedReason = WhyUnknown
 		return info
 	}
 	worktreeChanged := !info.WorktreeClean
@@ -127,14 +167,14 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 	case headChanged && worktreeChanged:
 		info.ChangedReason = "head+worktree"
 	default:
-		info.ChangedReason = "unknown"
+		info.ChangedReason = WhyUnknown
 	}
 	return info
 }
 
 func BuildSyncPlan(meta store.Meta, cfgHash uint64, info GitInfo) *SyncPlan {
 	plan := &SyncPlan{
-		Mode:             "full",
+		Mode:             ModeFull,
 		BaseHead:         meta.RepoHead,
 		CurrentHead:      info.CurrentHead,
 		WorktreeClean:    info.WorktreeClean,
@@ -143,48 +183,48 @@ func BuildSyncPlan(meta store.Meta, cfgHash uint64, info GitInfo) *SyncPlan {
 	}
 
 	if !info.Repo {
-		plan.Why = "not_git_repo"
+		plan.Why = WhyNotGitRepo
 		return plan
 	}
-	if info.ChangedReason == "unknown" {
-		plan.Why = "unknown"
+	if info.ChangedReason == WhyUnknown {
+		plan.Why = WhyUnknown
 		return plan
 	}
 	if meta.SchemaVersion != store.SchemaVersion {
-		plan.Why = "schema_changed"
+		plan.Why = WhySchemaChanged
 		return plan
 	}
 	if meta.ConfigHash != cfgHash {
-		plan.Why = "config_changed"
+		plan.Why = WhyConfigChanged
 		return plan
 	}
 
 	headMatches := info.BaseHead != "" && info.CurrentHead != "" && info.BaseHead == info.CurrentHead
 	if info.DirtyRepodexOnly && headMatches {
-		plan.Mode = "noop"
-		plan.Why = "git_changed_non_indexable"
+		plan.Mode = ModeNoop
+		plan.Why = WhyGitChangedNonIndexable
 		return plan
 	}
 
 	if info.WorktreeDirty && !headMatches {
-		plan.Why = "git_head_and_worktree_changed"
+		plan.Why = WhyGitHeadAndWorktreeChanged
 		return plan
 	}
 	if !headMatches {
-		plan.Why = "git_head_changed"
+		plan.Why = WhyGitHeadChanged
 		return plan
 	}
 	if info.WorktreeDirty {
 		if info.ChangedPathCount > 0 {
-			plan.Why = "git_worktree_changed"
+			plan.Why = WhyGitWorktreeChanged
 			return plan
 		}
-		plan.Why = "git_changed_non_indexable"
+		plan.Why = WhyGitChangedNonIndexable
 		return plan
 	}
 
-	plan.Mode = "noop"
-	plan.Why = "up_to_date"
+	plan.Mode = ModeNoop
+	plan.Why = WhyUpToDate
 	return plan
 }
 

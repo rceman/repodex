@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -24,6 +25,28 @@ func isGitUnavailable(err error) bool {
 		return true
 	}
 	return false
+}
+
+// TopLevel returns the absolute path to the git repository root for the provided
+// starting directory.
+func TopLevel(root string) (string, error) {
+	out, err := runGit(root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", fmt.Errorf("git rev-parse --show-toplevel returned empty path")
+	}
+	path = filepath.Clean(path)
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		path = abs
+	}
+	return path, nil
 }
 
 // IsRepo reports whether the provided root is inside a git work tree.
