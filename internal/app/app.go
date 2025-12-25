@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/memkit/repodex/internal/cli"
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/fetch"
+	"github.com/memkit/repodex/internal/gitx"
 	"github.com/memkit/repodex/internal/hash"
 	"github.com/memkit/repodex/internal/ignore"
 	"github.com/memkit/repodex/internal/index"
@@ -28,6 +30,20 @@ type StatusResponse struct {
 	TermCount     int   `json:"term_count"`
 	Dirty         bool  `json:"dirty"`
 	ChangedFiles  int   `json:"changed_files"`
+
+	// Git-related diagnostics (helpful for clients such as Codex).
+	GitRepo       bool   `json:"git_repo,omitempty"`
+	RepoHead      string `json:"repo_head,omitempty"`
+	CurrentHead   string `json:"current_head,omitempty"`
+	WorktreeClean bool   `json:"worktree_clean,omitempty"`
+	HeadMatches   bool   `json:"head_matches,omitempty"`
+
+	// Git status diagnostics (useful for reminding to commit the index).
+	GitDirtyPathCount   int  `json:"git_dirty_path_count,omitempty"`
+	GitDirtyRepodexOnly bool `json:"git_dirty_repodex_only,omitempty"`
+
+	SchemaVersion  int    `json:"schema_version,omitempty"`
+	RepodexVersion string `json:"repodex_version,omitempty"`
 }
 
 // Run executes the CLI app and returns an exit code.
@@ -124,12 +140,13 @@ func runInit(root string, force bool) error {
 		return err
 	}
 
+	repoHead := currentRepoHead(root)
 	cfgBytes, err := os.ReadFile(store.ConfigPath(root))
 	if err != nil {
 		return err
 	}
 	cfgHash := hash.Sum64(cfgBytes)
-	meta := store.NewMeta(cfg.IndexVersion, 0, 0, 0, cfgHash)
+	meta := store.NewMeta(cfg.IndexVersion, 0, 0, 0, cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
 	}
@@ -169,8 +186,9 @@ func runIndexSync(root string) error {
 		return err
 	}
 
+	repoHead := currentRepoHead(root)
 	cfgHash := hash.Sum64(cfgBytes)
-	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash)
+	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
 	}
@@ -191,6 +209,11 @@ func outputStatus(resp StatusResponse, jsonOut bool) error {
 		return enc.Encode(resp)
 	}
 	fmt.Printf("Indexed: %v\nDirty: %v\nChanged files: %d\n", resp.Indexed, resp.Dirty, resp.ChangedFiles)
+	if resp.GitRepo && !resp.WorktreeClean && resp.GitDirtyRepodexOnly {
+		fmt.Printf("Git: working tree dirty due to .repodex only (commit index artifacts if you rely on portable index)\n")
+	} else if resp.GitRepo && !resp.WorktreeClean {
+		fmt.Printf("Git: working tree dirty (%d paths)\n", resp.GitDirtyPathCount)
+	}
 	return nil
 }
 
@@ -255,6 +278,65 @@ func computeStatus(root string) (StatusResponse, error) {
 		return StatusResponse{}, err
 	}
 	cfgHash := hash.Sum64(cfgBytes)
+
+	// Collect git diagnostics once; do not fail status on git errors.
+	gitRepo := false
+	currentHead := ""
+	worktreeClean := false
+	gitDirtyPathCount := 0
+	gitDirtyRepodexOnly := false
+	if isRepo, err := gitx.IsRepo(root); err == nil && isRepo {
+		gitRepo = true
+		if head, err := gitx.Head(root); err == nil {
+			currentHead = head
+		}
+		if clean, err := gitx.IsWorkTreeClean(root); err == nil {
+			worktreeClean = clean
+		}
+		if !worktreeClean {
+			if paths, err := gitx.StatusChangedPaths(root); err == nil {
+				gitDirtyPathCount = len(paths)
+				if len(paths) > 0 {
+					repodexOnly := true
+					for _, p := range paths {
+						// p uses forward slashes from git.
+						if p == ".repodex" || strings.HasPrefix(p, ".repodex/") {
+							continue
+						}
+						repodexOnly = false
+						break
+					}
+					gitDirtyRepodexOnly = repodexOnly
+				}
+			}
+		}
+	}
+	headMatches := gitRepo && currentHead != "" && meta.RepoHead != "" && currentHead == meta.RepoHead
+
+	if meta.SchemaVersion == store.SchemaVersion && meta.ConfigHash == cfgHash {
+		if headMatches && worktreeClean {
+			return StatusResponse{
+				Indexed:       true,
+				IndexedAtUnix: meta.IndexedAtUnix,
+				FileCount:     meta.FileCount,
+				ChunkCount:    meta.ChunkCount,
+				TermCount:     meta.TermCount,
+				Dirty:         false,
+				ChangedFiles:  0,
+
+				GitRepo:             gitRepo,
+				RepoHead:            meta.RepoHead,
+				CurrentHead:         currentHead,
+				WorktreeClean:       worktreeClean,
+				HeadMatches:         headMatches,
+				GitDirtyPathCount:   gitDirtyPathCount,
+				GitDirtyRepodexOnly: gitDirtyRepodexOnly,
+				SchemaVersion:       meta.SchemaVersion,
+				RepodexVersion:      meta.RepodexVersion,
+			}, nil
+		}
+	}
+
 	var ignoreDirs []string
 	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
 		ignoreDirs = dirs
@@ -307,6 +389,16 @@ func computeStatus(root string) (StatusResponse, error) {
 		TermCount:     meta.TermCount,
 		Dirty:         changed > 0,
 		ChangedFiles:  changed,
+
+		GitRepo:             gitRepo,
+		RepoHead:            meta.RepoHead,
+		CurrentHead:         currentHead,
+		WorktreeClean:       worktreeClean,
+		HeadMatches:         headMatches,
+		GitDirtyPathCount:   gitDirtyPathCount,
+		GitDirtyRepodexOnly: gitDirtyRepodexOnly,
+		SchemaVersion:       meta.SchemaVersion,
+		RepodexVersion:      meta.RepodexVersion,
 	}, nil
 }
 
@@ -345,4 +437,16 @@ func runFetch(root string, ids []uint32, maxLines int) error {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	return enc.Encode(results)
+}
+
+func currentRepoHead(root string) string {
+	isRepo, err := gitx.IsRepo(root)
+	if err != nil || !isRepo {
+		return ""
+	}
+	head, err := gitx.Head(root)
+	if err != nil {
+		return ""
+	}
+	return head
 }

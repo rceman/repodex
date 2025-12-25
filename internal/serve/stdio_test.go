@@ -501,7 +501,7 @@ func buildTestIndex(t *testing.T, root string) {
 	if err := index.Serialize(root, fileEntries, chunkEntries, postings); err != nil {
 		t.Fatalf("serialize index: %v", err)
 	}
-	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), hash.Sum64(cfgBytes))
+	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), hash.Sum64(cfgBytes), "")
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		t.Fatalf("save meta: %v", err)
 	}
