@@ -141,7 +141,13 @@ func resolvePath(rootReal string, chunkPath string) (string, error) {
 	if filepath.IsAbs(chunkPath) {
 		return "", fmt.Errorf("absolute paths are not allowed")
 	}
-	clean := filepath.Clean(filepath.FromSlash(chunkPath))
+	// Reject any explicit path traversal segments ("..") in the original input.
+	// Do this before filepath.Clean so inputs like "a/../b" are rejected per plan.
+	raw := filepath.FromSlash(chunkPath)
+	if hasDotDotSegment(raw) {
+		return "", fmt.Errorf("path traversal detected")
+	}
+	clean := filepath.Clean(raw)
 	if clean == "." || clean == "" {
 		return "", fmt.Errorf("invalid path")
 	}
@@ -158,4 +164,15 @@ func resolvePath(rootReal string, chunkPath string) (string, error) {
 		return "", fmt.Errorf("path escapes root")
 	}
 	return fullReal, nil
+}
+
+func hasDotDotSegment(p string) bool {
+	// Treat both '/' and '\' as separators so we can reliably detect traversal
+	// attempts regardless of platform or client path formatting.
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == ".." {
+			return true
+		}
+	}
+	return false
 }
