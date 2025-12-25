@@ -8,23 +8,33 @@ import (
 
 // Meta captures persisted index metadata.
 type Meta struct {
-	IndexVersion  int    `json:"IndexVersion"`
-	IndexedAtUnix int64  `json:"IndexedAtUnix"`
-	FileCount     int    `json:"FileCount"`
-	ChunkCount    int    `json:"ChunkCount"`
-	TermCount     int    `json:"TermCount"`
-	ConfigHash    uint64 `json:"ConfigHash"`
+	IndexVersion   int    `json:"IndexVersion"`
+	IndexedAtUnix  int64  `json:"IndexedAtUnix"`
+	FileCount      int    `json:"FileCount"`
+	ChunkCount     int    `json:"ChunkCount"`
+	TermCount      int    `json:"TermCount"`
+	ConfigHash     uint64 `json:"ConfigHash"`
+	SchemaVersion  int    `json:"SchemaVersion"`
+	RepoHead       string `json:"RepoHead"`
+	RepodexVersion string `json:"RepodexVersion"`
 }
 
+const SchemaVersion = 1
+
+var RepodexVersion = "dev"
+
 // NewMeta builds a Meta with the supplied counts and current timestamp.
-func NewMeta(indexVersion int, fileCount, chunkCount, termCount int, configHash uint64) Meta {
+func NewMeta(indexVersion int, fileCount, chunkCount, termCount int, configHash uint64, repoHead string) Meta {
 	return Meta{
-		IndexVersion:  indexVersion,
-		IndexedAtUnix: time.Now().Unix(),
-		FileCount:     fileCount,
-		ChunkCount:    chunkCount,
-		TermCount:     termCount,
-		ConfigHash:    configHash,
+		IndexVersion:   indexVersion,
+		IndexedAtUnix:  time.Now().Unix(),
+		FileCount:      fileCount,
+		ChunkCount:     chunkCount,
+		TermCount:      termCount,
+		ConfigHash:     configHash,
+		SchemaVersion:  SchemaVersion,
+		RepoHead:       repoHead,
+		RepodexVersion: RepodexVersion,
 	}
 }
 
