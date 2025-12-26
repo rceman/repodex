@@ -1,5 +1,7 @@
 # Portable index workflow
 
+Repodex currently supports only git repositories; the working root is resolved via `git rev-parse --show-toplevel`. The portable index workflow applies within git repos.
+
 Repodex indices can be checked in for portability. Follow this workflow:
 
 1. Run `repodex index sync` (or `repodex sync`) to build the index locally.

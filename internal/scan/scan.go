@@ -29,15 +29,17 @@ type FileStat struct {
 	Size  int64
 }
 
+// FileRef holds file path and stat metadata without content.
+type FileRef struct {
+	RelPath string
+	AbsPath string
+	Size    int64
+	MTime   int64
+}
+
 // Walk collects all matching files according to configuration and ignore lists.
 func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, error) {
-	normalizedIgnores := make([]string, 0, len(ignoreDirs)+len(cfg.ExcludeDirs))
-	for _, dir := range cfg.ExcludeDirs {
-		normalizedIgnores = append(normalizedIgnores, ignore.NormalizePath(dir))
-	}
-	for _, dir := range ignoreDirs {
-		normalizedIgnores = append(normalizedIgnores, ignore.NormalizePath(dir))
-	}
+	normalizedIgnores := normalizeIgnores(cfg, ignoreDirs)
 
 	type candidate struct {
 		relPath string
@@ -71,10 +73,14 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 			return nil
 		}
 
-		if !matchesExt(rel, cfg.IncludeExt) {
+		lowerRel := strings.ToLower(rel)
+		if isSkippableArtifact(lowerRel) {
 			return nil
 		}
-		if strings.HasSuffix(rel, ".d.ts") {
+		if !matchesExt(lowerRel, cfg.IncludeExt) {
+			return nil
+		}
+		if strings.HasSuffix(lowerRel, ".d.ts") {
 			return nil
 		}
 
@@ -125,13 +131,7 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 
 // WalkMeta collects only path, mtime, and size for matching files.
 func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, error) {
-	normalizedIgnores := make([]string, 0, len(ignoreDirs)+len(cfg.ExcludeDirs))
-	for _, dir := range cfg.ExcludeDirs {
-		normalizedIgnores = append(normalizedIgnores, ignore.NormalizePath(dir))
-	}
-	for _, dir := range ignoreDirs {
-		normalizedIgnores = append(normalizedIgnores, ignore.NormalizePath(dir))
-	}
+	normalizedIgnores := normalizeIgnores(cfg, ignoreDirs)
 
 	type candidate struct {
 		relPath string
@@ -164,10 +164,14 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 			return nil
 		}
 
-		if !matchesExt(rel, cfg.IncludeExt) {
+		lowerRel := strings.ToLower(rel)
+		if isSkippableArtifact(lowerRel) {
 			return nil
 		}
-		if strings.HasSuffix(rel, ".d.ts") {
+		if !matchesExt(lowerRel, cfg.IncludeExt) {
+			return nil
+		}
+		if strings.HasSuffix(lowerRel, ".d.ts") {
 			return nil
 		}
 
@@ -205,11 +209,109 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 	return files, nil
 }
 
-func matchesExt(path string, exts []string) bool {
+func matchesExt(lowerPath string, exts []string) bool {
 	for _, ext := range exts {
-		if strings.HasSuffix(strings.ToLower(path), strings.ToLower(ext)) {
+		if strings.HasSuffix(lowerPath, strings.ToLower(ext)) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSkippableArtifact(lowerRel string) bool {
+	return strings.HasSuffix(lowerRel, ".map")
+}
+
+// WalkRefs enumerates indexable files with stat metadata without reading content.
+func WalkRefs(root string, cfg config.Config, ignoreDirs []string) ([]FileRef, error) {
+	normalizedIgnores := normalizeIgnores(cfg, ignoreDirs)
+
+	type candidate struct {
+		relPath string
+		absPath string
+		info    fs.FileInfo
+	}
+
+	var candidates []candidate
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		rel = ignore.NormalizePath(rel)
+		if rel == "." {
+			return nil
+		}
+
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+
+		if d.IsDir() {
+			if ignore.IsIgnoredDir(rel, normalizedIgnores) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		lowerRel := strings.ToLower(rel)
+		if isSkippableArtifact(lowerRel) {
+			return nil
+		}
+		if !matchesExt(lowerRel, cfg.IncludeExt) {
+			return nil
+		}
+		if strings.HasSuffix(lowerRel, ".d.ts") {
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > cfg.Token.MaxFileBytesCode {
+			return nil
+		}
+
+		candidates = append(candidates, candidate{
+			relPath: rel,
+			absPath: path,
+			info:    info,
+		})
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].relPath < candidates[j].relPath
+	})
+
+	refs := make([]FileRef, 0, len(candidates))
+	for _, cand := range candidates {
+		refs = append(refs, FileRef{
+			RelPath: cand.relPath,
+			AbsPath: cand.absPath,
+			Size:    cand.info.Size(),
+			MTime:   cand.info.ModTime().Unix(),
+		})
+	}
+	return refs, nil
+}
+
+func normalizeIgnores(cfg config.Config, ignoreDirs []string) []string {
+	normalized := make([]string, 0, len(ignoreDirs)+len(cfg.ExcludeDirs))
+	for _, dir := range cfg.ExcludeDirs {
+		normalized = append(normalized, ignore.NormalizePath(dir))
+	}
+	for _, dir := range ignoreDirs {
+		normalized = append(normalized, ignore.NormalizePath(dir))
+	}
+	return normalized
 }

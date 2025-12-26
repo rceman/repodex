@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
+	"github.com/memkit/repodex/internal/cachex"
 	"github.com/memkit/repodex/internal/cli"
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/fetch"
@@ -13,12 +16,15 @@ import (
 	"github.com/memkit/repodex/internal/hash"
 	"github.com/memkit/repodex/internal/ignore"
 	"github.com/memkit/repodex/internal/index"
+	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/scan"
 	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/serve"
 	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
+	"github.com/memkit/repodex/internal/textutil"
+	"github.com/memkit/repodex/internal/tokenize"
 )
 
 // StatusResponse describes output of status command.
@@ -45,11 +51,12 @@ type StatusResponse struct {
 	SchemaVersion  int    `json:"schema_version,omitempty"`
 	RepodexVersion string `json:"repodex_version,omitempty"`
 
-	GitBaseHead         string            `json:"git_base_head,omitempty"`
-	GitCurrentHead      string            `json:"git_current_head,omitempty"`
-	GitWorktreeClean    bool              `json:"git_worktree_clean,omitempty"`
-	GitChangedPathCount int               `json:"git_changed_path_count,omitempty"`
-	GitChangedPaths     []string          `json:"git_changed_paths,omitempty"`
+	GitBaseHead         string   `json:"git_base_head,omitempty"`
+	GitCurrentHead      string   `json:"git_current_head,omitempty"`
+	GitWorktreeClean    bool     `json:"git_worktree_clean,omitempty"`
+	GitChangedPathCount int      `json:"git_changed_path_count,omitempty"`
+	GitChangedPaths     []string `json:"git_changed_paths,omitempty"`
+	// GitChangedReason is a git-domain signal (not a SyncPlan why).
 	GitChangedReason    string            `json:"git_changed_reason,omitempty"`
 	GitChangedIndexable bool              `json:"git_changed_indexable,omitempty"`
 	SyncPlan            *statusx.SyncPlan `json:"sync_plan,omitempty"`
@@ -63,33 +70,39 @@ func Run(args []string) int {
 		return 1
 	}
 
+	repoRoot, err := resolveRepoRoot(".")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
 	switch cmd.Action {
 	case "init":
-		if err := runInit(".", cmd.Force); err != nil {
+		if err := runInit(repoRoot, cmd.Force); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "status":
-		if err := runStatus(".", cmd.JSON); err != nil {
+		if err := runStatus(repoRoot, cmd.JSON); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "sync":
-		if err := runIndexSync("."); err != nil {
+		if err := runIndexSync(repoRoot); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "search":
-		if err := runSearch(".", cmd.Q, cmd.TopK); err != nil {
+		if err := runSearch(repoRoot, cmd.Q, cmd.TopK); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "fetch":
-		if err := runFetch(".", cmd.IDs, cmd.MaxLines); err != nil {
+		if err := runFetch(repoRoot, cmd.IDs, cmd.MaxLines); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -97,13 +110,13 @@ func Run(args []string) int {
 	case "index":
 		switch cmd.Subcommand {
 		case "sync":
-			if err := runIndexSync("."); err != nil {
+			if err := runIndexSync(repoRoot); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
 			return 0
 		case "status":
-			if err := runStatus(".", cmd.JSON); err != nil {
+			if err := runStatus(repoRoot, cmd.JSON); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -111,7 +124,7 @@ func Run(args []string) int {
 		}
 	case "serve":
 		if cmd.Stdio {
-			if err := runServeStdio("."); err != nil {
+			if err := runServeStdio(repoRoot); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -162,11 +175,130 @@ func runInit(root string, force bool) error {
 	return nil
 }
 
-func runIndexSync(root string) error {
-	if st, err := computeStatus(root); err == nil {
-		if st.SyncPlan != nil && st.SyncPlan.Mode == "noop" {
-			return nil
+func precomputedFromCache(entry cachex.CacheEntry) (index.PrecomputedFile, error) {
+	if len(entry.Chunks) != len(entry.Tokens) {
+		return index.PrecomputedFile{}, fmt.Errorf("cache invalid for %s: chunk/token length mismatch", entry.RelPath)
+	}
+	const maxU32 = uint64(^uint32(0))
+	chunks := make([]index.PrecomputedChunk, 0, len(entry.Chunks))
+	for idx, ch := range entry.Chunks {
+		if ch.Start < 1 || ch.End < 1 || ch.End < ch.Start {
+			return index.PrecomputedFile{}, fmt.Errorf("cache invalid for %s: invalid chunk line range", entry.RelPath)
 		}
+		if uint64(ch.Start) > maxU32 || uint64(ch.End) > maxU32 {
+			return index.PrecomputedFile{}, fmt.Errorf("cache invalid for %s: invalid chunk line range", entry.RelPath)
+		}
+		chunks = append(chunks, index.PrecomputedChunk{
+			StartLine: uint32(ch.Start),
+			EndLine:   uint32(ch.End),
+			Snippet:   ch.Snippet,
+			Tokens:    entry.Tokens[idx],
+		})
+	}
+	return index.PrecomputedFile{
+		Path:   filepath.ToSlash(entry.RelPath),
+		MTime:  entry.MTime,
+		Size:   entry.Size,
+		Hash64: entry.Hash64,
+		Chunks: chunks,
+	}, nil
+}
+
+func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Config) (index.PrecomputedFile, cachex.CacheEntry, error) {
+	content, err := os.ReadFile(ref.AbsPath)
+	if err != nil {
+		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
+	}
+	normalized := textutil.NormalizeNewlinesBytes(content)
+	hash64 := hash.Sum64(normalized)
+
+	chunkDrafts, err := plugin.ChunkFile(ref.RelPath, normalized, cfg.Chunk, cfg.Limits)
+	if err != nil {
+		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
+	}
+	lines := strings.Split(string(normalized), "\n")
+	tokenizer := tokenize.New(cfg.Token)
+	pathTokens := tokenizer.Path(ref.RelPath)
+
+	lineTokens := make([][]string, len(lines))
+	if cfg.Token.TokenizeStringLiterals {
+		for i, line := range lines {
+			lineTokens[i] = tokenizer.Text(line)
+		}
+	} else {
+		var st tokenize.StringScanState
+		for i, line := range lines {
+			lineTokens[i] = tokenizer.TextWithState(line, &st)
+		}
+	}
+
+	precomputedChunks := make([]index.PrecomputedChunk, 0, len(chunkDrafts))
+	cacheChunks := make([]cachex.LocalChunk, 0, len(chunkDrafts))
+	tokenSets := make([][]string, 0, len(chunkDrafts))
+
+	for _, ch := range chunkDrafts {
+		start := int(ch.StartLine)
+		end := int(ch.EndLine)
+		if start < 1 {
+			start = 1
+		}
+		if end > len(lines) {
+			end = len(lines)
+		}
+		tokenSet := make(map[string]struct{}, len(pathTokens))
+		for _, tok := range pathTokens {
+			tokenSet[tok] = struct{}{}
+		}
+		for idx := start - 1; idx < end && idx >= 0 && idx < len(lineTokens); idx++ {
+			for _, tok := range lineTokens[idx] {
+				tokenSet[tok] = struct{}{}
+			}
+		}
+		// Invariant: tokens are unique and sorted to keep downstream index building deterministic.
+		tokens := make([]string, 0, len(tokenSet))
+		for tok := range tokenSet {
+			tokens = append(tokens, tok)
+		}
+		sort.Strings(tokens)
+		precomputedChunks = append(precomputedChunks, index.PrecomputedChunk{
+			StartLine: ch.StartLine,
+			EndLine:   ch.EndLine,
+			Snippet:   ch.Snippet,
+			Tokens:    tokens,
+		})
+		cacheChunks = append(cacheChunks, cachex.LocalChunk{
+			Start:   int(ch.StartLine),
+			End:     int(ch.EndLine),
+			Snippet: ch.Snippet,
+		})
+		tokenSets = append(tokenSets, tokens)
+	}
+
+	file := index.PrecomputedFile{
+		Path:   filepath.ToSlash(ref.RelPath),
+		MTime:  ref.MTime,
+		Size:   ref.Size,
+		Hash64: hash64,
+		Chunks: precomputedChunks,
+	}
+	cacheEntry := cachex.CacheEntry{
+		RelPath: filepath.ToSlash(ref.RelPath),
+		Size:    ref.Size,
+		MTime:   ref.MTime,
+		Hash64:  hash64,
+		Chunks:  cacheChunks,
+		Tokens:  tokenSets,
+	}
+	return file, cacheEntry, nil
+}
+
+func runIndexSync(root string) error {
+	st, err := computeStatusResolved(root)
+	if err != nil {
+		return err
+	}
+	if st.SyncPlan != nil && st.SyncPlan.Mode == statusx.ModeNoop {
+		return nil
 	}
 
 	cfgPath := store.ConfigPath(root)
@@ -174,6 +306,7 @@ func runIndexSync(root string) error {
 	if err != nil {
 		return err
 	}
+	cfgHash := hash.Sum64(cfgBytes)
 
 	var ignoreDirs []string
 	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
@@ -187,12 +320,71 @@ func runIndexSync(root string) error {
 		return err
 	}
 
-	files, err := scan.Walk(root, cfg, ignoreDirs)
+	changedSet := make(map[string]struct{})
+	fullRebuild := true
+	if st.SyncPlan != nil {
+		for _, p := range st.SyncPlan.ChangedPaths {
+			changedSet[ignore.NormalizePath(p)] = struct{}{}
+		}
+		fullRebuild = st.SyncPlan.Why == statusx.WhyMissingIndex ||
+			st.SyncPlan.Why == statusx.WhySchemaChanged ||
+			st.SyncPlan.Why == statusx.WhyConfigChanged
+	}
+
+	if fullRebuild {
+		if err := cachex.Purge(root); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	purged, err := cachex.EnsureMeta(root, cachex.Meta{
+		ConfigHash:  cfgHash,
+		ProjectType: cfg.ProjectType,
+	})
+	if err != nil {
+		return err
+	}
+	if purged {
+		fullRebuild = true
+	}
+
+	refs, err := scan.WalkRefs(root, cfg, ignoreDirs)
 	if err != nil {
 		return err
 	}
 
-	fileEntries, chunkEntries, postings, err := index.Build(files, plugin, cfg)
+	precomputed := make([]index.PrecomputedFile, 0, len(refs))
+	for _, ref := range refs {
+		rebuild := fullRebuild
+		if !rebuild {
+			_, rebuild = changedSet[ref.RelPath]
+		}
+		if !rebuild {
+			entry, ok, err := cachex.LoadByPath(root, ref.RelPath)
+			if err != nil {
+				return err
+			}
+			if ok {
+				file, err := precomputedFromCache(entry)
+				if err != nil {
+					return err
+				}
+				precomputed = append(precomputed, file)
+				continue
+			}
+		}
+
+		file, cacheEntry, err := buildCacheEntry(ref, plugin, cfg)
+		if err != nil {
+			return err
+		}
+		if err := cachex.Save(root, cacheEntry); err != nil {
+			return err
+		}
+		precomputed = append(precomputed, file)
+	}
+
+	fileEntries, chunkEntries, postings, err := index.BuildFromPrecomputed(precomputed)
 	if err != nil {
 		return err
 	}
@@ -202,7 +394,6 @@ func runIndexSync(root string) error {
 	}
 
 	repoHead := currentRepoHead(root)
-	cfgHash := hash.Sum64(cfgBytes)
 	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
@@ -211,7 +402,7 @@ func runIndexSync(root string) error {
 }
 
 func runStatus(root string, jsonOut bool) error {
-	resp, err := computeStatus(root)
+	resp, err := computeStatusResolved(root)
 	if err != nil {
 		return err
 	}
@@ -231,7 +422,7 @@ func outputStatus(resp StatusResponse, jsonOut bool) error {
 	}
 	if resp.SyncPlan != nil {
 		fmt.Printf("Sync plan: mode=%s, why=%s\n", resp.SyncPlan.Mode, resp.SyncPlan.Why)
-		if resp.SyncPlan.Why == "git_changed_non_indexable" && resp.GitDirtyRepodexOnly {
+		if resp.SyncPlan.Why == statusx.WhyGitChangedNonIndexable && resp.GitDirtyRepodexOnly {
 			fmt.Printf("Note: repo dirty only due to .repodex; commit index artifacts for portability.\n")
 		}
 	}
@@ -249,7 +440,15 @@ func fileExistsOk(path string) (bool, error) {
 	return true, nil
 }
 
-func computeStatus(root string) (StatusResponse, error) {
+func computeStatus(start string) (StatusResponse, error) {
+	root, err := resolveRepoRoot(start)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	return computeStatusResolved(root)
+}
+
+func computeStatusResolved(root string) (StatusResponse, error) {
 	metaPath := store.MetaPath(root)
 	filesPath := store.FilesPath(root)
 	chunksPath := store.ChunksPath(root)
@@ -286,6 +485,9 @@ func computeStatus(root string) (StatusResponse, error) {
 			}
 		}
 		gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+		if !gitInfo.Repo {
+			return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
+		}
 		resp := StatusResponse{
 			Indexed:       false,
 			IndexedAtUnix: 0,
@@ -297,15 +499,15 @@ func computeStatus(root string) (StatusResponse, error) {
 		}
 		applyGitInfo(&resp, gitInfo)
 		resp.SyncPlan = &statusx.SyncPlan{
-			Mode:             "full",
-			Why:              "missing_index",
+			Mode:             statusx.ModeFull,
+			Why:              statusx.WhyMissingIndex,
 			BaseHead:         gitInfo.BaseHead,
 			CurrentHead:      gitInfo.CurrentHead,
 			WorktreeClean:    gitInfo.WorktreeClean,
 			ChangedPaths:     gitInfo.ChangedPaths,
 			ChangedPathCount: gitInfo.ChangedPathCount,
 		}
-		resp.Dirty = resp.SyncPlan.Mode != "noop"
+		resp.Dirty = resp.SyncPlan.Mode != statusx.ModeNoop
 		if gitInfo.Repo {
 			resp.ChangedFiles = resp.SyncPlan.ChangedPathCount
 		}
@@ -318,74 +520,17 @@ func computeStatus(root string) (StatusResponse, error) {
 	}
 
 	gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+	if !gitInfo.Repo {
+		return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
+	}
 
-	cfg, cfgBytes, err := config.Load(cfgPath)
+	_, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
 		return StatusResponse{}, err
 	}
 	cfgHash := hash.Sum64(cfgBytes)
 
 	plan := statusx.BuildSyncPlan(meta, cfgHash, gitInfo)
-	if gitInfo.Repo {
-		resp := StatusResponse{
-			Indexed:        true,
-			IndexedAtUnix:  meta.IndexedAtUnix,
-			FileCount:      meta.FileCount,
-			ChunkCount:     meta.ChunkCount,
-			TermCount:      meta.TermCount,
-			Dirty:          plan.Mode != "noop",
-			ChangedFiles:   plan.ChangedPathCount,
-			SchemaVersion:  meta.SchemaVersion,
-			RepodexVersion: meta.RepodexVersion,
-		}
-		applyGitInfo(&resp, gitInfo)
-		resp.SyncPlan = plan
-		return resp, nil
-	}
-
-	var ignoreDirs []string
-	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
-		ignoreDirs = dirs
-	} else if !os.IsNotExist(err) {
-		return StatusResponse{}, err
-	}
-
-	indexedFiles, err := index.LoadFileEntries(filesPath)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-
-	currentFiles, err := scan.WalkMeta(root, cfg, ignoreDirs)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-
-	indexMap := make(map[string]index.FileEntry, len(indexedFiles))
-	for _, f := range indexedFiles {
-		indexMap[filepath.ToSlash(f.Path)] = f
-	}
-
-	seen := make(map[string]struct{})
-	changed := 0
-	if meta.ConfigHash != cfgHash {
-		changed++
-	}
-	for _, f := range currentFiles {
-		path := filepath.ToSlash(f.Path)
-		seen[path] = struct{}{}
-		if existing, ok := indexMap[path]; ok {
-			if existing.MTime != f.MTime || existing.Size != f.Size {
-				changed++
-			}
-		} else {
-			changed++
-		}
-	}
-	for path := range indexMap {
-		if _, ok := seen[path]; !ok {
-			changed++
-		}
-	}
 
 	resp := StatusResponse{
 		Indexed:        true,
@@ -393,20 +538,13 @@ func computeStatus(root string) (StatusResponse, error) {
 		FileCount:      meta.FileCount,
 		ChunkCount:     meta.ChunkCount,
 		TermCount:      meta.TermCount,
-		Dirty:          changed > 0,
-		ChangedFiles:   changed,
+		Dirty:          plan.Mode != statusx.ModeNoop,
+		ChangedFiles:   plan.ChangedPathCount,
 		SchemaVersion:  meta.SchemaVersion,
 		RepodexVersion: meta.RepodexVersion,
 	}
 	applyGitInfo(&resp, gitInfo)
 	resp.SyncPlan = plan
-	if gitInfo.Repo && plan != nil {
-		resp.Dirty = plan.Mode != "noop"
-		resp.ChangedFiles = plan.ChangedPathCount
-		if resp.ChangedFiles == 0 && resp.Dirty && changed > 0 {
-			resp.ChangedFiles = changed
-		}
-	}
 	return resp, nil
 }
 
@@ -436,13 +574,13 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 
 func runServeStdio(root string) error {
 	statusFn := func() (interface{}, error) {
-		return computeStatus(root)
+		return computeStatusResolved(root)
 	}
 	syncFn := func() (interface{}, error) {
 		if err := runIndexSync(root); err != nil {
 			return nil, err
 		}
-		return computeStatus(root)
+		return computeStatusResolved(root)
 	}
 	return serve.ServeStdio(root, statusFn, syncFn)
 }
@@ -481,4 +619,12 @@ func currentRepoHead(root string) string {
 		return ""
 	}
 	return head
+}
+
+func resolveRepoRoot(start string) (string, error) {
+	root, err := gitx.TopLevel(start)
+	if err != nil {
+		return "", fmt.Errorf("repodex requires a git repository")
+	}
+	return root, nil
 }

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
 )
 
@@ -47,7 +48,7 @@ func TestGitChangeDetectionAndSyncPlan(t *testing.T) {
 	if resp.GitChangedReason != "none" {
 		t.Fatalf("expected GitChangedReason=none, got %s", resp.GitChangedReason)
 	}
-	if resp.SyncPlan == nil || resp.SyncPlan.Mode != "noop" {
+	if resp.SyncPlan == nil || resp.SyncPlan.Mode != statusx.ModeNoop {
 		t.Fatalf("expected SyncPlan noop at baseline, got %#v", resp.SyncPlan)
 	}
 	assertDirtyMatchesPlan(t, resp)
@@ -67,10 +68,10 @@ func TestGitChangeDetectionAndSyncPlan(t *testing.T) {
 	if resp.GitChangedIndexable {
 		t.Fatalf("expected GitChangedIndexable=false for non-indexable change")
 	}
-	if resp.SyncPlan == nil || resp.SyncPlan.Mode != "full" {
+	if resp.SyncPlan == nil || resp.SyncPlan.Mode != statusx.ModeFull {
 		t.Fatalf("expected SyncPlan full when worktree dirty but non-indexable, got %#v", resp.SyncPlan)
 	}
-	if resp.SyncPlan != nil && resp.SyncPlan.Why != "git_changed_non_indexable" {
+	if resp.SyncPlan != nil && resp.SyncPlan.Why != statusx.WhyGitChangedNonIndexable {
 		t.Fatalf("expected SyncPlan why=git_changed_non_indexable, got %s", resp.SyncPlan.Why)
 	}
 	if resp.ChangedFiles != 0 {
@@ -89,7 +90,7 @@ func TestGitChangeDetectionAndSyncPlan(t *testing.T) {
 	if resp.GitChangedReason != "worktree" {
 		t.Fatalf("expected GitChangedReason=worktree for unstaged change, got %s", resp.GitChangedReason)
 	}
-	if resp.SyncPlan == nil || resp.SyncPlan.Mode != "full" {
+	if resp.SyncPlan == nil || resp.SyncPlan.Mode != statusx.ModeFull {
 		t.Fatalf("expected SyncPlan full when worktree dirty, got %#v", resp.SyncPlan)
 	}
 	assertContainsPath(t, resp.GitChangedPaths, "a.ts")
@@ -133,7 +134,7 @@ func TestGitChangeDetectionAndSyncPlan(t *testing.T) {
 		t.Fatalf("runIndexSync (refresh) failed: %v", err)
 	}
 	resp = statusMust(t, root)
-	if resp.SyncPlan == nil || resp.SyncPlan.Mode != "noop" {
+	if resp.SyncPlan == nil || resp.SyncPlan.Mode != statusx.ModeNoop {
 		t.Fatalf("expected SyncPlan noop after refresh, got %#v", resp.SyncPlan)
 	}
 	assertDirtyMatchesPlan(t, resp)
@@ -170,6 +171,17 @@ func statusMust(t *testing.T, root string) StatusResponse {
 	resp, err := computeStatus(root)
 	if err != nil {
 		t.Fatalf("computeStatus returned error: %v", err)
+	}
+	if !statusx.IsValidGitChangedReason(resp.GitChangedReason) {
+		t.Fatalf("invalid git changed reason: %s", resp.GitChangedReason)
+	}
+	if resp.SyncPlan != nil {
+		if !statusx.IsValidMode(resp.SyncPlan.Mode) {
+			t.Fatalf("invalid sync plan mode: %s", resp.SyncPlan.Mode)
+		}
+		if !statusx.IsValidWhy(resp.SyncPlan.Why) {
+			t.Fatalf("invalid sync plan why: %s", resp.SyncPlan.Why)
+		}
 	}
 	return resp
 }
@@ -222,10 +234,10 @@ func TestRepodexOnlyDirtySyncPlanNoop(t *testing.T) {
 	if !resp.GitDirtyRepodexOnly {
 		t.Fatalf("expected GitDirtyRepodexOnly=true")
 	}
-	if resp.SyncPlan == nil || resp.SyncPlan.Mode != "noop" {
+	if resp.SyncPlan == nil || resp.SyncPlan.Mode != statusx.ModeNoop {
 		t.Fatalf("expected SyncPlan noop for repodex-only dirt, got %#v", resp.SyncPlan)
 	}
-	if resp.SyncPlan != nil && resp.SyncPlan.Why != "git_changed_non_indexable" {
+	if resp.SyncPlan != nil && resp.SyncPlan.Why != statusx.WhyGitChangedNonIndexable {
 		t.Fatalf("expected SyncPlan why=git_changed_non_indexable, got %s", resp.SyncPlan.Why)
 	}
 	if resp.Dirty {
@@ -262,7 +274,7 @@ func assertDirtyMatchesPlan(t *testing.T, resp StatusResponse) {
 	if resp.SyncPlan == nil {
 		return
 	}
-	wantDirty := resp.SyncPlan.Mode != "noop"
+	wantDirty := resp.SyncPlan.Mode != statusx.ModeNoop
 	if resp.Dirty != wantDirty {
 		t.Fatalf("expected Dirty=%v to match SyncPlan mode %s", wantDirty, resp.SyncPlan.Mode)
 	}

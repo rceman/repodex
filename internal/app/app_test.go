@@ -1,16 +1,22 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/memkit/repodex/internal/cachex"
+	"github.com/memkit/repodex/internal/search"
+	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
 )
 
 func TestRunInitForceOverwritesRepodexDir(t *testing.T) {
-	root := t.TempDir()
+	root := setupGitRepo(t, false)
 
 	if err := runInit(root, false); err != nil {
 		t.Fatalf("initial init failed: %v", err)
@@ -42,23 +48,10 @@ func TestRunInitForceOverwritesRepodexDir(t *testing.T) {
 }
 
 func TestComputeStatusMissingIndexArtifact(t *testing.T) {
-	root := t.TempDir()
-	repodexDir := filepath.Join(root, ".repodex")
-	if err := os.Mkdir(repodexDir, 0o755); err != nil {
-		t.Fatalf("failed to create repodex dir: %v", err)
-	}
+	root := setupGitRepo(t, true)
 
-	// Create only the files that should exist; omit chunks.dat to simulate a partial index.
-	touch := []string{
-		filepath.Join(repodexDir, "meta.json"),
-		filepath.Join(repodexDir, "files.dat"),
-		filepath.Join(repodexDir, "terms.dat"),
-		filepath.Join(repodexDir, "postings.dat"),
-	}
-	for _, path := range touch {
-		if err := os.WriteFile(path, nil, 0o644); err != nil {
-			t.Fatalf("failed to create %s: %v", path, err)
-		}
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
 	}
 
 	resp, err := computeStatus(root)
@@ -78,7 +71,7 @@ func TestComputeStatusMissingIndexArtifact(t *testing.T) {
 }
 
 func TestComputeStatusMissingIndexHasSyncPlan(t *testing.T) {
-	root := t.TempDir()
+	root := setupGitRepo(t, true)
 
 	if err := runInit(root, false); err != nil {
 		t.Fatalf("runInit failed: %v", err)
@@ -94,10 +87,10 @@ func TestComputeStatusMissingIndexHasSyncPlan(t *testing.T) {
 	if resp.SyncPlan == nil {
 		t.Fatalf("expected SyncPlan to be present when index is missing")
 	}
-	if resp.SyncPlan.Mode != "full" {
+	if resp.SyncPlan.Mode != statusx.ModeFull {
 		t.Fatalf("expected SyncPlan mode=full for missing index, got %s", resp.SyncPlan.Mode)
 	}
-	if resp.SyncPlan.Why != "missing_index" {
+	if resp.SyncPlan.Why != statusx.WhyMissingIndex {
 		t.Fatalf("expected SyncPlan why=missing_index, got %s", resp.SyncPlan.Why)
 	}
 }
@@ -105,51 +98,44 @@ func TestComputeStatusMissingIndexHasSyncPlan(t *testing.T) {
 func TestComputeStatusNonGitUsesFilesystemDiff(t *testing.T) {
 	root := t.TempDir()
 
-	if err := runInit(root, false); err != nil {
-		t.Fatalf("runInit failed: %v", err)
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
 	}
-
-	content := "const a = 1;\n"
-	srcPath := filepath.Join(root, "sample.ts")
-	if err := os.WriteFile(srcPath, []byte(content), 0o644); err != nil {
-		t.Fatalf("failed to write source file: %v", err)
+	if err := os.Chdir(root); err != nil {
+		t.Fatalf("chdir: %v", err)
 	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
 
-	if err := runIndexSync(root); err != nil {
-		t.Fatalf("runIndexSync failed: %v", err)
-	}
-
-	// Modify file to trigger mtime/size change.
-	if err := os.WriteFile(srcPath, []byte("const a = 2; // change\n"), 0o644); err != nil {
-		t.Fatalf("failed to modify source file: %v", err)
+	if code := Run([]string{"init"}); code == 0 {
+		t.Fatalf("expected Run(init) to fail outside git repo")
 	}
 
 	resp, err := computeStatus(root)
-	if err != nil {
-		t.Fatalf("computeStatus returned error: %v", err)
+	if err == nil {
+		t.Fatalf("expected computeStatus to fail outside git repo")
 	}
-	if resp.SyncPlan == nil || resp.SyncPlan.Why != "not_git_repo" {
-		t.Fatalf("expected SyncPlan why=not_git_repo, got %#v", resp.SyncPlan)
+	if !strings.Contains(err.Error(), "git repository") {
+		t.Fatalf("expected git repository error, got %v", err)
 	}
-	if !resp.Dirty {
-		t.Fatalf("expected Dirty=true after filesystem change in non-git repo")
-	}
-	if resp.ChangedFiles == 0 {
-		t.Fatalf("expected ChangedFiles>0 for non-git filesystem change")
+	if resp.Indexed || resp.SyncPlan != nil {
+		t.Fatalf("expected empty response when computeStatus fails outside git repo")
 	}
 }
 
 func TestComputeStatusCRLFFileNotDirtyAfterSync(t *testing.T) {
-	root := t.TempDir()
-
-	if err := runInit(root, false); err != nil {
-		t.Fatalf("runInit failed: %v", err)
-	}
+	root := setupGitRepo(t, true)
 
 	content := "const a = 1;\r\nconst b = 2;\r\n"
 	srcPath := filepath.Join(root, "sample.ts")
 	if err := os.WriteFile(srcPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("failed to write source file: %v", err)
+	}
+	runGit(t, root, "add", "sample.ts")
+	runGit(t, root, "commit", "-m", "add sample")
+
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
 	}
 
 	if err := runIndexSync(root); err != nil {
@@ -247,6 +233,148 @@ func TestComputeStatusSkipsFastPathWhenGitDirty(t *testing.T) {
 	}
 }
 
+func TestCommandsFromSubdirUseRepoRoot(t *testing.T) {
+	root := setupGitRepo(t, true)
+
+	sub := filepath.Join(root, "subdir")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("failed to create subdir: %v", err)
+	}
+
+	samplePath := filepath.Join(sub, "sample.ts")
+	if err := os.WriteFile(samplePath, []byte("const sample = 1;\n"), 0o644); err != nil {
+		t.Fatalf("failed to write sample: %v", err)
+	}
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(sub); err != nil {
+		t.Fatalf("chdir to subdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWD) })
+
+	if code := Run([]string{"init"}); code != 0 {
+		t.Fatalf("Run(init) from subdir failed with code %d", code)
+	}
+	if code := Run([]string{"sync"}); code != 0 {
+		t.Fatalf("Run(sync) from subdir failed with code %d", code)
+	}
+
+	resp, err := computeStatus(sub)
+	if err != nil {
+		t.Fatalf("computeStatus from subdir returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".repodex", "config.json")); err != nil {
+		t.Fatalf("expected .repodex/config.json in repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sub, ".repodex")); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("expected no .repodex directory in subdir, got err=%v", err)
+	}
+
+	if _, err := os.Stat(store.FilesPath(root)); err != nil {
+		t.Fatalf("expected files.dat in repo root: %v", err)
+	}
+	if _, err := os.Stat(store.ChunksPath(root)); err != nil {
+		t.Fatalf("expected chunks.dat in repo root: %v", err)
+	}
+	if _, err := os.Stat(store.TermsPath(root)); err != nil {
+		t.Fatalf("expected terms.dat in repo root: %v", err)
+	}
+	if _, err := os.Stat(store.PostingsPath(root)); err != nil {
+		t.Fatalf("expected postings.dat in repo root: %v", err)
+	}
+
+	if !resp.GitRepo {
+		t.Fatalf("expected GitRepo=true from subdir")
+	}
+	if resp.SyncPlan == nil {
+		t.Fatalf("expected SyncPlan to be present from subdir")
+	}
+	if resp.SyncPlan != nil {
+		if !statusx.IsValidMode(resp.SyncPlan.Mode) {
+			t.Fatalf("invalid sync plan mode from subdir: %s", resp.SyncPlan.Mode)
+		}
+		if !statusx.IsValidWhy(resp.SyncPlan.Why) {
+			t.Fatalf("invalid sync plan why from subdir: %s", resp.SyncPlan.Why)
+		}
+	}
+}
+
+func TestIncrementalSyncDoesNotReadUnchangedFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod semantics differ on Windows")
+	}
+	requireGit(t)
+
+	root := t.TempDir()
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.com")
+	runGit(t, root, "config", "user.name", "Test User")
+
+	for i := 1; i <= 3; i++ {
+		name := fmt.Sprintf("file%d.ts", i)
+		content := fmt.Sprintf("export const value%d = %d;\n", i, i)
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial files")
+
+	if err := runInit(root, false); err != nil {
+		t.Fatalf("runInit failed: %v", err)
+	}
+	if err := runIndexSync(root); err != nil {
+		t.Fatalf("initial sync failed: %v", err)
+	}
+
+	readonly := []string{"file2.ts", "file3.ts"}
+	for _, rel := range readonly {
+		p := filepath.Join(root, rel)
+		if err := os.Chmod(p, 0o000); err != nil {
+			t.Fatalf("chmod %s: %v", rel, err)
+		}
+		t.Cleanup(func(path string) func() {
+			return func() { _ = os.Chmod(path, 0o644) }
+		}(p))
+	}
+
+	first := filepath.Join(root, "file1.ts")
+	if err := os.WriteFile(first, []byte("export const value1 = 42;\n"), 0o644); err != nil {
+		t.Fatalf("modify file1: %v", err)
+	}
+
+	if err := runIndexSync(root); err != nil {
+		t.Fatalf("incremental sync failed: %v", err)
+	}
+
+	cacheFiles, err := filepath.Glob(filepath.Join(cachex.CacheDir(root), "*.json"))
+	if err != nil {
+		t.Fatalf("glob cache: %v", err)
+	}
+	entryCount := 0
+	for _, p := range cacheFiles {
+		if filepath.Base(p) == "meta.json" {
+			continue
+		}
+		entryCount++
+	}
+	if entryCount == 0 {
+		t.Fatalf("expected per-file cache entries to be created")
+	}
+
+	results, err := search.Search(root, "value1", search.Options{TopK: 3})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("expected search results after incremental sync")
+	}
+}
+
 func setupGitRepoWithIndex(t *testing.T, ignoreRepodex bool, corruptFiles bool) string {
 	t.Helper()
 
@@ -293,8 +421,38 @@ func setupGitRepoWithIndex(t *testing.T, ignoreRepodex bool, corruptFiles bool) 
 
 func runGit(t *testing.T, root string, args ...string) {
 	t.Helper()
+	requireGit(t)
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
+}
+
+func setupGitRepo(t *testing.T, ignoreRepodex bool) string {
+	t.Helper()
+	requireGit(t)
+
+	root := t.TempDir()
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.com")
+	runGit(t, root, "config", "user.name", "Test User")
+	if ignoreRepodex {
+		if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".repodex\n"), 0o644); err != nil {
+			t.Fatalf("failed to write gitignore: %v", err)
+		}
+	}
+	readme := filepath.Join(root, "README.md")
+	if err := os.WriteFile(readme, []byte("# test\n"), 0o644); err != nil {
+		t.Fatalf("failed to write README: %v", err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial")
+	return root
+}
+
+func requireGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
 	}
 }
