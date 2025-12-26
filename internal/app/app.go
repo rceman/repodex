@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/memkit/repodex/internal/cachex"
@@ -23,6 +24,7 @@ import (
 	"github.com/memkit/repodex/internal/statusx"
 	"github.com/memkit/repodex/internal/store"
 	"github.com/memkit/repodex/internal/textutil"
+	"github.com/memkit/repodex/internal/tokenize"
 )
 
 // StatusResponse describes output of status command.
@@ -215,14 +217,49 @@ func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Co
 		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
 	}
 	lines := strings.Split(string(normalized), "\n")
+	tokenizer := tokenize.New(cfg.Token)
+	pathTokens := tokenizer.Path(ref.RelPath)
+
+	lineTokens := make([][]string, len(lines))
+	if cfg.Token.TokenizeStringLiterals {
+		for i, line := range lines {
+			lineTokens[i] = tokenizer.Text(line)
+		}
+	} else {
+		var st tokenize.StringScanState
+		for i, line := range lines {
+			lineTokens[i] = tokenizer.TextWithState(line, &st)
+		}
+	}
 
 	precomputedChunks := make([]index.PrecomputedChunk, 0, len(chunkDrafts))
 	cacheChunks := make([]cachex.LocalChunk, 0, len(chunkDrafts))
 	tokenSets := make([][]string, 0, len(chunkDrafts))
 
 	for _, ch := range chunkDrafts {
-		chunkText := chunkTextFromLines(lines, int(ch.StartLine), int(ch.EndLine))
-		tokens := plugin.TokenizeChunk(ref.RelPath, chunkText, cfg.Token)
+		start := int(ch.StartLine)
+		end := int(ch.EndLine)
+		if start < 1 {
+			start = 1
+		}
+		if end > len(lines) {
+			end = len(lines)
+		}
+		tokenSet := make(map[string]struct{}, len(pathTokens))
+		for _, tok := range pathTokens {
+			tokenSet[tok] = struct{}{}
+		}
+		for idx := start - 1; idx < end && idx >= 0 && idx < len(lineTokens); idx++ {
+			for _, tok := range lineTokens[idx] {
+				tokenSet[tok] = struct{}{}
+			}
+		}
+		// Invariant: tokens are unique and sorted to keep downstream index building deterministic.
+		tokens := make([]string, 0, len(tokenSet))
+		for tok := range tokenSet {
+			tokens = append(tokens, tok)
+		}
+		sort.Strings(tokens)
 		precomputedChunks = append(precomputedChunks, index.PrecomputedChunk{
 			StartLine: ch.StartLine,
 			EndLine:   ch.EndLine,
@@ -253,19 +290,6 @@ func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Co
 		Tokens:  tokenSets,
 	}
 	return file, cacheEntry, nil
-}
-
-func chunkTextFromLines(lines []string, start, end int) string {
-	if start < 1 {
-		start = 1
-	}
-	if end > len(lines) {
-		end = len(lines)
-	}
-	if start > end {
-		return ""
-	}
-	return strings.Join(lines[start-1:end], "\n")
 }
 
 func runIndexSync(root string) error {
@@ -308,7 +332,7 @@ func runIndexSync(root string) error {
 	}
 
 	if fullRebuild {
-		if err := cachex.PurgeV1(root); err != nil && !os.IsNotExist(err) {
+		if err := cachex.Purge(root); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

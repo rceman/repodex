@@ -59,12 +59,8 @@ func BuildFromPrecomputed(files []PrecomputedFile) ([]FileEntry, []ChunkEntry, m
 				EndLine:   ch.EndLine,
 				Snippet:   ch.Snippet,
 			}
-			unique := make(map[string]struct{})
-			for _, t := range ch.Tokens {
-				unique[t] = struct{}{}
-			}
 			chunkEntries = append(chunkEntries, chunkEntry)
-			for term := range unique {
+			for _, term := range ch.Tokens {
 				postings[term] = append(postings[term], chunkEntry.ChunkID)
 			}
 			nextChunkID++
