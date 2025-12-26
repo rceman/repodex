@@ -73,10 +73,14 @@ func Walk(root string, cfg config.Config, ignoreDirs []string) ([]ScannedFile, e
 			return nil
 		}
 
-		if !matchesExt(rel, cfg.IncludeExt) {
+		lowerRel := strings.ToLower(rel)
+		if isSkippableArtifact(lowerRel) {
 			return nil
 		}
-		if strings.HasSuffix(rel, ".d.ts") {
+		if !matchesExt(lowerRel, cfg.IncludeExt) {
+			return nil
+		}
+		if strings.HasSuffix(lowerRel, ".d.ts") {
 			return nil
 		}
 
@@ -160,10 +164,14 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 			return nil
 		}
 
-		if !matchesExt(rel, cfg.IncludeExt) {
+		lowerRel := strings.ToLower(rel)
+		if isSkippableArtifact(lowerRel) {
 			return nil
 		}
-		if strings.HasSuffix(rel, ".d.ts") {
+		if !matchesExt(lowerRel, cfg.IncludeExt) {
+			return nil
+		}
+		if strings.HasSuffix(lowerRel, ".d.ts") {
 			return nil
 		}
 
@@ -201,13 +209,17 @@ func WalkMeta(root string, cfg config.Config, ignoreDirs []string) ([]FileStat, 
 	return files, nil
 }
 
-func matchesExt(path string, exts []string) bool {
+func matchesExt(lowerPath string, exts []string) bool {
 	for _, ext := range exts {
-		if strings.HasSuffix(strings.ToLower(path), strings.ToLower(ext)) {
+		if strings.HasSuffix(lowerPath, strings.ToLower(ext)) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSkippableArtifact(lowerRel string) bool {
+	return strings.HasSuffix(lowerRel, ".map")
 }
 
 // WalkRefs enumerates indexable files with stat metadata without reading content.
@@ -246,10 +258,14 @@ func WalkRefs(root string, cfg config.Config, ignoreDirs []string) ([]FileRef, e
 			return nil
 		}
 
-		if !matchesExt(rel, cfg.IncludeExt) {
+		lowerRel := strings.ToLower(rel)
+		if isSkippableArtifact(lowerRel) {
 			return nil
 		}
-		if strings.HasSuffix(rel, ".d.ts") {
+		if !matchesExt(lowerRel, cfg.IncludeExt) {
+			return nil
+		}
+		if strings.HasSuffix(lowerRel, ".d.ts") {
 			return nil
 		}
 

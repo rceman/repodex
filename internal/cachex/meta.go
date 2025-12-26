@@ -49,7 +49,7 @@ func SaveMeta(root string, meta Meta) error {
 	return writeFileAtomicReplace(path, data, 0o644)
 }
 
-// EnsureMeta verifies cache metadata, purging v1 cache on mismatch.
+// EnsureMeta verifies cache metadata, purging the current cache on mismatch.
 func EnsureMeta(root string, want Meta) (bool, error) {
 	want.CacheVersion = CacheVersion
 	want.SchemaVersion = store.SchemaVersion
@@ -65,7 +65,7 @@ func EnsureMeta(root string, want Meta) (bool, error) {
 		return false, nil
 	}
 	if existing != want {
-		if err := PurgeV1(root); err != nil {
+		if err := Purge(root); err != nil {
 			return false, err
 		}
 		if err := SaveMeta(root, want); err != nil {

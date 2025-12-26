@@ -19,7 +19,7 @@ type Meta struct {
 	RepodexVersion string `json:"RepodexVersion"`
 }
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 var RepodexVersion = "dev"
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/memkit/repodex/internal/config"
@@ -16,9 +17,10 @@ import (
 func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 	root := t.TempDir()
 	fixtures := map[string]string{
-		"b.ts":        "import './a'\nconst b = 1\nconst c = 2\n",
-		"a.ts":        "export function a() { return 1 }\nexport const x = 2\n",
-		"nested/c.ts": "interface Foo { bar: string }\nconst c = 3\n",
+		"b.ts":          "import './a'\nconst b = 1\nconst c = 2\n",
+		"a.ts":          "export function a() { return 1 }\nexport const x = 2\n",
+		"nested/c.ts":   "interface Foo { bar: string }\nconst c = 3\n",
+		"bundle.js.map": "{}",
 	}
 	for path, content := range fixtures {
 		fullPath := filepath.Join(root, path)
@@ -46,6 +48,11 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 	firstScan, err := scan.Walk(root, cfg, nil)
 	if err != nil {
 		t.Fatalf("first walk: %v", err)
+	}
+	for _, f := range firstScan {
+		if strings.HasSuffix(strings.ToLower(f.Path), ".map") {
+			t.Fatalf("unexpected map artifact indexed: %s", f.Path)
+		}
 	}
 	secondScan, err := scan.Walk(root, cfg, nil)
 	if err != nil {

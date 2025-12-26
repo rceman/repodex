@@ -11,7 +11,7 @@ import (
 	"github.com/memkit/repodex/internal/store"
 )
 
-const CacheVersion = "v1"
+const CacheVersion = "v2"
 
 // CacheEntry represents a serialized per-file cache record.
 type CacheEntry struct {
@@ -30,13 +30,13 @@ type LocalChunk struct {
 	Snippet string `json:"snippet"`
 }
 
-// CacheDir returns the v1 cache directory under the repo root.
+// CacheDir returns the cache directory for the current cache version under the repo root.
 func CacheDir(root string) string {
 	return filepath.Join(store.Dir(root), "cache", CacheVersion)
 }
 
-// PurgeV1 removes the v1 cache directory entirely.
-func PurgeV1(root string) error {
+// Purge removes the cache directory for the current version entirely.
+func Purge(root string) error {
 	return os.RemoveAll(CacheDir(root))
 }
 
