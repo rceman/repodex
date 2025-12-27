@@ -94,3 +94,67 @@ func TestWriteSearchGroupedNoFormatEscapes(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", got)
 	}
 }
+
+func TestWriteSearchCompactOutput(t *testing.T) {
+	results := []search.Result{
+		{
+			Path:      "b.go",
+			StartLine: 120,
+			Snippet:   "  func runSearch() error {\n  return nil\n}",
+			Why:       []string{"run", "search"},
+		},
+		{
+			Path:      "b.go",
+			StartLine: 5,
+			MatchLine: 7,
+			Snippet:   "  -dash\nnext",
+		},
+		{
+			Path:      "a.go",
+			StartLine: 42,
+			Snippet:   "   alpha",
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSearchCompact(&buf, results, SearchOptions{}); err != nil {
+		t.Fatalf("format error: %v", err)
+	}
+
+	want := "" +
+		"-b.go\n" +
+		"[120] func runSearch() error {\n" +
+		"[  7] -dash\n" +
+		"-a.go\n" +
+		"[ 42] alpha\n"
+
+	got := buf.String()
+	if got != want {
+		t.Fatalf("unexpected output:\n%s", got)
+	}
+}
+
+func TestWriteSearchCompactExplainNoFormat(t *testing.T) {
+	results := []search.Result{
+		{
+			Path:      "file.go",
+			StartLine: 10,
+			Snippet:   "  @line\nnext",
+			Why:       []string{"beta", "alpha"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSearchCompact(&buf, results, SearchOptions{NoFormat: true, Explain: true}); err != nil {
+		t.Fatalf("format error: %v", err)
+	}
+
+	want := "" +
+		"-file.go\n" +
+		"[10] \\@line  [why: alpha,beta]\n"
+
+	got := buf.String()
+	if got != want {
+		t.Fatalf("unexpected output:\n%s", got)
+	}
+}

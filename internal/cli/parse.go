@@ -19,6 +19,7 @@ type Command struct {
 	MaxLines   int
 	Score      bool
 	NoFormat   bool
+	Explain    bool
 }
 
 // Parse converts argv into a Command description.
@@ -90,6 +91,9 @@ func Parse(args []string) (Command, error) {
 				i++
 			case "--score":
 				c.Score = true
+				i++
+			case "--explain":
+				c.Explain = true
 				i++
 			default:
 				return Command{}, fmt.Errorf("unknown flag %s", args[i])

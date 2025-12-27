@@ -29,6 +29,7 @@ type Result struct {
 	Path      string   `json:"path"`
 	StartLine uint32   `json:"start_line"`
 	EndLine   uint32   `json:"end_line"`
+	MatchLine uint32   `json:"match_line,omitempty"`
 	Score     float64  `json:"score"`
 	Snippet   string   `json:"snippet"`
 	Why       []string `json:"why"`

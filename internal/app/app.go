@@ -91,7 +91,7 @@ func Run(args []string) int {
 		}
 		return 0
 	case "search":
-		if err := runSearch(repoRoot, cmd.Q, cmd.TopK, cmd.JSON, cmd.Score, cmd.NoFormat); err != nil {
+		if err := runSearch(repoRoot, cmd.Q, cmd.TopK, cmd.JSON, cmd.Score, cmd.NoFormat, cmd.Explain); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -698,9 +698,12 @@ func runServeStdio(root string) error {
 	return serve.ServeStdio(root, statusFn, syncFn)
 }
 
-func runSearch(root string, q string, topK int, jsonOut bool, showScore bool, noFormat bool) error {
+func runSearch(root string, q string, topK int, jsonOut bool, showScore bool, noFormat bool, explain bool) error {
 	if q == "" {
 		return fmt.Errorf("query cannot be empty")
+	}
+	if topK <= 0 {
+		topK = 3
 	}
 	results, err := search.Search(root, q, search.Options{TopK: topK})
 	if err != nil {
@@ -713,9 +716,10 @@ func runSearch(root string, q string, topK int, jsonOut bool, showScore bool, no
 	if showScore {
 		search.RoundScores(results)
 	}
-	return format.WriteSearchGrouped(os.Stdout, results, format.SearchOptions{
+	return format.WriteSearchCompact(os.Stdout, results, format.SearchOptions{
 		NoFormat:  noFormat,
 		WithScore: showScore,
+		Explain:   explain,
 	})
 }
 

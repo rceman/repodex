@@ -4,15 +4,18 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/memkit/repodex/internal/search"
 )
 
-// SearchOptions controls the grouped search output format.
+// SearchOptions controls search output formatting.
 type SearchOptions struct {
 	NoFormat  bool
 	WithScore bool
+	Explain   bool
 }
 
 type group struct {
@@ -115,4 +118,80 @@ func writeHit(w *bufio.Writer, hit search.Result, opt SearchOptions) error {
 		}
 	}
 	return nil
+}
+
+// WriteSearchCompact writes a compact search output without why grouping.
+func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions) error {
+	if len(results) == 0 {
+		return nil
+	}
+
+	maxLine := uint32(0)
+	for _, hit := range results {
+		line := hit.MatchLine
+		if line == 0 {
+			line = hit.StartLine
+		}
+		if line > maxLine {
+			maxLine = line
+		}
+	}
+	width := 1
+	if maxLine > 0 {
+		width = len(strconv.FormatUint(uint64(maxLine), 10))
+	}
+
+	writer := bufio.NewWriter(w)
+	lastPath := ""
+
+	for _, hit := range results {
+		if hit.Path != lastPath {
+			if _, err := fmt.Fprintf(writer, "-%s\n", hit.Path); err != nil {
+				return err
+			}
+			lastPath = hit.Path
+		}
+
+		line := hit.MatchLine
+		if line == 0 {
+			line = hit.StartLine
+		}
+		codeLine := hit.Snippet
+		if idx := strings.IndexByte(codeLine, '\n'); idx >= 0 {
+			codeLine = codeLine[:idx]
+		}
+		codeLine = strings.TrimLeft(codeLine, " \t")
+		if opt.NoFormat {
+			codeLine = escapeNoFormatLine(codeLine)
+		}
+		if _, err := fmt.Fprintf(writer, " [%*d] %s", width, line, codeLine); err != nil {
+			return err
+		}
+		if opt.Explain && len(hit.Why) > 0 {
+			why := append([]string(nil), hit.Why...)
+			if !sort.StringsAreSorted(why) {
+				sort.Strings(why)
+			}
+			if _, err := fmt.Fprintf(writer, "  [why: %s]", strings.Join(why, ",")); err != nil {
+				return err
+			}
+		}
+		if _, err := writer.WriteString("\n"); err != nil {
+			return err
+		}
+	}
+
+	return writer.Flush()
+}
+
+func escapeNoFormatLine(line string) string {
+	if len(line) == 0 {
+		return line
+	}
+	switch line[0] {
+	case '>', '-', '@':
+		return "\\" + line
+	default:
+		return line
+	}
 }
