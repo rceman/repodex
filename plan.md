@@ -1,10 +1,10 @@
-# plan.md - Repodex (TS/TSX index + Search/Fetch/Serve over StdIO)
+# plan.md - Repodex (TS/JS + Go index + Search/Fetch/Serve over StdIO)
 
 ## 0) What we are building
 
 **Repodex** is a small CLI tool that can:
 
-1) Index a TypeScript/TSX codebase into a compact on-disk index (Part 1).  
+1) Index a TypeScript/JavaScript or Go codebase into a compact on-disk index (Part 1).
 2) Expose that index via a simple agent-friendly interface (Part 2):
    - search (candidates-only, ranked, limited)
    - fetch (bounded extraction of indexed chunks)
@@ -15,7 +15,7 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
 ## 1) Goals and constraints
 
 ### Goals
-- Deterministic, reproducible indexing for TS/TSX projects.
+- Deterministic, reproducible indexing for TS/JS and Go projects.
 - Fast candidate retrieval (postings-based) and bounded snippet fetching.
 - A robust `serve --stdio` mode suitable for long-running agent sessions.
 - Safety: do not allow reading files outside the indexed root; avoid symlink escapes.
@@ -23,7 +23,7 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
 ### Non-goals (for now)
 - Advanced ranking (BM25, proximity, phrase queries, field boosts).
 - Semantic embeddings or vector search.
-- Multi-language indexing (RU -> EN query normalization happens client-side only).
+- Multi-language indexing inside the core (RU -> EN query normalization happens client-side only).
 - Incremental indexing (sync can be full rebuild for the prototype).
 
 ## 2) CLI surface (user-facing)
@@ -35,25 +35,24 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
   - Reports whether the index exists and whether it is "dirty". `--json` outputs a machine-readable response.
 - `repodex sync`
   - Rebuilds the entire index (prototype-friendly full rebuild).
-- `repodex search --q "..." [--top_k N]`
+- `repodex search --q "..." [--top_k N] [--score] [--no-format] [--json]`
   - Runs candidates-only ranked search.
 - `repodex fetch --ids [..] [--max_lines N]`
   - Fetches bounded chunk text (ids capped to 5, max_lines default and capped at 120).
 - `repodex serve --stdio`
   - Runs JSONL request/response protocol on stdin/stdout.
 
-## 3) Part 1 - Indexing (TS/TSX)
+## 3) Part 1 - Indexing (TS/JS + Go)
 
 ### 3.1 Inputs (project root)
-- Config file (JSON): `.repodex/config.json`
-- Ignore file: `.repodex/ignore`
+- Config file (JSON): `.repodex.json`
+- Ignore file: `.repodex.ignore`
 - Files on disk under `root/`
 
 ### 3.2 Scanner rules
 - Walk the root directory, applying:
-  - ignore dirs (from config exclude + ignore file)
-  - include extensions (TS/TSX by default)
-  - exclude `.d.ts`
+  - ignore dirs (from ignore file and built-in rules)
+  - include extensions (from detected profiles)
   - max file size cap (from config)
 - Safety hardening:
   - Skip symlinks during scanning (do not follow) so scanning cannot traverse outside root via symlinks.
@@ -65,7 +64,7 @@ Primary use case: a local "code search + snippet fetch" backend for an agent tha
   - Ensures consistent `start_line` and `end_line` computation across platforms (Windows vs Unix).
 
 ### 3.4 Tokenization and chunking
-- Language plugin is selected by `ProjectType` in config (TS/TSX plugin).
+- Language plugin is selected per-file based on profile-driven extensions.
 - Chunking produces **ChunkEntry** records with:
   - `chunk_id`
   - `path` (relative, normalized with `/`)
@@ -96,19 +95,19 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
   - file stats (mtime and size) vs stored file entries
 - If mismatch: `Dirty=true` and the agent should call `sync`.
 
-## 4) Part 2 - Search/Fetch/Serve over the TS/TSX index
+## 4) Part 2 - Search/Fetch/Serve over the index
 
 ## 4.1 Search API (candidates-only)
 
 ### Data loaded for search
-- config + language plugin (project type selection)
+- config (tokenization rules)
 - `chunks` (metadata and snippet)
 - `terms` + `postings`
 - note: the search path does not need `files` metadata; file paths are taken from the chunk entries
 
 ### Query tokenization
-- Tokenize the query using the same TS plugin tokenizer rules as indexing:
-  - Reuse the plugin tokenizer on the query string (same token rules and stopwords).
+- Tokenize the query using the same shared tokenizer rules as indexing:
+  - Use the shared tokenizer on the query string (same token rules and stopwords).
   - Deduplicate tokens into unique terms before candidate collection and scoring.
 
 ### Candidate collection
@@ -138,6 +137,9 @@ Stored under `.repodex/` (paths abstracted via internal store helpers), typicall
 - `score`
 - `snippet` (from chunk entry)
 - `why`: matched terms that contributed (unique)
+  - non-JSON output is grouped by `why` and uses Variant A format by default
+  - `--no-format` removes indentation and escapes snippet lines starting with `>`, `-`, or `@`
+  - `--score` appends `~<score>` to hit lines in non-JSON output
 
 ## 4.2 Fetch API (bounded extraction)
 
@@ -218,7 +220,6 @@ Instead it must emit an error response and continue reading subsequent lines.
 ### In-process index cache
 - In `serve --stdio`, load index artifacts once and reuse for subsequent `search` and `fetch`:
   - cfg + cfg bytes
-  - plugin
   - chunks + chunkMap
   - terms + postings
 - Invalidate cache after successful `sync`.
