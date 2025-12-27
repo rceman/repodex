@@ -143,7 +143,7 @@ func collect(root string, cfg config.Config, rules profile.EffectiveRules) ([]ca
 		if profile.IsKnownBinaryExt(lowerRel) {
 			return nil
 		}
-		if !matchesExt(lowerRel, cfg.IncludeExt) {
+		if !matchesExt(lowerRel, rules.IncludeExt) {
 			return nil
 		}
 

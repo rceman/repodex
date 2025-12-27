@@ -31,7 +31,11 @@ func (c *IndexCache) Load(root string) error {
 		return nil
 	}
 
-	cfg, cfgBytes, err := config.Load(store.ConfigPath(root))
+	userCfg, cfgBytes, err := config.LoadUserConfig(store.ConfigPath(root))
+	if err != nil {
+		return err
+	}
+	cfg, _, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
 	if err != nil {
 		return err
 	}

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -156,25 +155,52 @@ func runInit(root string, force bool) error {
 		return err
 	}
 
-	cfg := config.DefaultConfig()
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	defaults := config.DefaultRuntimeConfig()
+	detected, err := profile.DetectProfiles(profile.DetectContext{Root: root})
+	if err != nil {
 		return err
 	}
-	if err := ignore.WriteDefaultIgnore(store.IgnorePath(root)); err != nil {
+	profiles := make([]string, 0, len(detected.Profiles))
+	for _, p := range detected.Profiles {
+		profiles = append(profiles, p.ID())
+	}
+	if len(profiles) == 0 {
+		profiles = []string{"ts_js"}
+	}
+
+	userCfg := config.UserConfig{Profiles: profiles}
+	if err := config.SaveUserConfig(store.ConfigPath(root), userCfg); err != nil {
+		return err
+	}
+
+	resolved, err := profile.ResolveProfiles(profiles)
+	if err != nil {
+		return err
+	}
+	ignorePatterns := append([]string{}, profile.GlobalScanIgnore()...)
+	for _, p := range resolved {
+		if rules := p.Rules(); len(rules.ScanIgnore) > 0 {
+			ignorePatterns = append(ignorePatterns, rules.ScanIgnore...)
+		}
+	}
+	if err := ignore.WriteIgnore(store.IgnorePath(root), ignorePatterns); err != nil {
 		return err
 	}
 
 	repoHead := currentRepoHead(root)
-	cfgBytes, err := os.ReadFile(store.ConfigPath(root))
+	cfg, profiles, err := config.ApplyOverrides(defaults, userCfg)
 	if err != nil {
 		return err
 	}
-	rules, err := profile.BuildEffectiveRules(root, cfg)
+	rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
 	if err != nil {
 		return err
 	}
-	cfgHash := combinedConfigHash(cfgBytes, rules.RulesHash)
-	meta := store.NewMeta(cfg.IndexVersion, 0, 0, 0, cfgHash, repoHead)
+	cfgHash, err := combinedConfigHash(cfg, rules.RulesHash)
+	if err != nil {
+		return err
+	}
+	meta := store.NewMeta(config.IndexVersion, 0, 0, 0, cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
 	}
@@ -308,15 +334,22 @@ func runIndexSync(root string) error {
 	}
 
 	cfgPath := store.ConfigPath(root)
-	cfg, cfgBytes, err := config.Load(cfgPath)
+	userCfg, _, err := config.LoadUserConfig(cfgPath)
 	if err != nil {
 		return err
 	}
-	rules, err := profile.BuildEffectiveRules(root, cfg)
+	cfg, profiles, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
 	if err != nil {
 		return err
 	}
-	cfgHash := combinedConfigHash(cfgBytes, rules.RulesHash)
+	rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
+	if err != nil {
+		return err
+	}
+	cfgHash, err := combinedConfigHash(cfg, rules.RulesHash)
+	if err != nil {
+		return err
+	}
 
 	plugin, err := factory.FromProjectType(cfg.ProjectType)
 	if err != nil {
@@ -341,8 +374,8 @@ func runIndexSync(root string) error {
 	}
 
 	purged, err := cachex.EnsureMeta(root, cachex.Meta{
-		ConfigHash:  cfgHash,
-		ProjectType: cfg.ProjectType,
+		ConfigHash: cfgHash,
+		Profiles:   append([]string(nil), profiles...),
 	})
 	if err != nil {
 		return err
@@ -397,7 +430,7 @@ func runIndexSync(root string) error {
 	}
 
 	repoHead := currentRepoHead(root)
-	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, repoHead)
+	meta := store.NewMeta(config.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
 	}
@@ -487,7 +520,20 @@ func computeStatusResolved(root string) (StatusResponse, error) {
 				meta = loaded
 			}
 		}
-		gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+		userCfg, _, err := config.LoadUserConfig(cfgPath)
+		if err != nil {
+			return StatusResponse{}, err
+		}
+		cfg, profiles, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
+		if err != nil {
+			return StatusResponse{}, err
+		}
+		rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
+		if err != nil {
+			return StatusResponse{}, err
+		}
+
+		gitInfo := statusx.CollectGitInfo(root, meta.RepoHead, rules.IncludeExt)
 		if !gitInfo.Repo {
 			return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
 		}
@@ -522,20 +568,27 @@ func computeStatusResolved(root string) (StatusResponse, error) {
 		return StatusResponse{}, err
 	}
 
-	gitInfo := statusx.CollectGitInfo(root, meta.RepoHead)
+	userCfg, _, err := config.LoadUserConfig(cfgPath)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	cfg, profiles, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	cfgHash, err := combinedConfigHash(cfg, rules.RulesHash)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+
+	gitInfo := statusx.CollectGitInfo(root, meta.RepoHead, rules.IncludeExt)
 	if !gitInfo.Repo {
 		return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
 	}
-
-	cfg, cfgBytes, err := config.Load(cfgPath)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-	rules, err := profile.BuildEffectiveRules(root, cfg)
-	if err != nil {
-		return StatusResponse{}, err
-	}
-	cfgHash := combinedConfigHash(cfgBytes, rules.RulesHash)
 
 	plan := statusx.BuildSyncPlan(meta, cfgHash, gitInfo)
 
@@ -579,12 +632,23 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 	}
 }
 
-func combinedConfigHash(cfgBytes []byte, rulesHash uint64) uint64 {
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, rulesHash)
-	payload := append([]byte{}, cfgBytes...)
-	payload = append(payload, buf...)
-	return hash.Sum64(payload)
+func combinedConfigHash(cfg config.Config, rulesHash uint64) (uint64, error) {
+	state := struct {
+		Chunk     config.ChunkingConfig
+		Scan      config.ScanConfig
+		Limits    config.LimitsConfig
+		RulesHash uint64
+	}{
+		Chunk:     cfg.Chunk,
+		Scan:      cfg.Scan,
+		Limits:    cfg.Limits,
+		RulesHash: rulesHash,
+	}
+	bytes, err := json.Marshal(state)
+	if err != nil {
+		return 0, err
+	}
+	return hash.Sum64(bytes), nil
 }
 
 func runServeStdio(root string) error {

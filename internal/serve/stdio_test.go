@@ -5,7 +5,6 @@ package serve
 
 import (
 	"bufio"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -472,17 +471,16 @@ func buildTestIndex(t *testing.T, root string) {
 		t.Fatalf("write sample file: %v", err)
 	}
 
-	cfg := config.DefaultConfig()
-	cfg.ProjectType = "ts"
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	userCfg := config.UserConfig{Profiles: []string{"ts_js", "node"}}
+	if err := config.SaveUserConfig(store.ConfigPath(root), userCfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 
-	cfgBytes, err := os.ReadFile(store.ConfigPath(root))
+	cfg, profiles, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
 	if err != nil {
-		t.Fatalf("read config: %v", err)
+		t.Fatalf("apply config: %v", err)
 	}
-	rules, err := profile.BuildEffectiveRules(root, cfg)
+	rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
 	if err != nil {
 		t.Fatalf("build rules: %v", err)
 	}
@@ -504,11 +502,31 @@ func buildTestIndex(t *testing.T, root string) {
 	if err := index.Serialize(root, fileEntries, chunkEntries, postings); err != nil {
 		t.Fatalf("serialize index: %v", err)
 	}
-	buf := make([]byte, 8)
-	binary.LittleEndian.PutUint64(buf, rules.RulesHash)
-	cfgHash := hash.Sum64(append(cfgBytes, buf...))
-	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, "")
+	cfgHash, err := combinedConfigHash(cfg, rules.RulesHash)
+	if err != nil {
+		t.Fatalf("config hash: %v", err)
+	}
+	meta := store.NewMeta(config.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, "")
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		t.Fatalf("save meta: %v", err)
 	}
+}
+
+func combinedConfigHash(cfg config.Config, rulesHash uint64) (uint64, error) {
+	state := struct {
+		Chunk     config.ChunkingConfig
+		Scan      config.ScanConfig
+		Limits    config.LimitsConfig
+		RulesHash uint64
+	}{
+		Chunk:     cfg.Chunk,
+		Scan:      cfg.Scan,
+		Limits:    cfg.Limits,
+		RulesHash: rulesHash,
+	}
+	bytes, err := json.Marshal(state)
+	if err != nil {
+		return 0, err
+	}
+	return hash.Sum64(bytes), nil
 }

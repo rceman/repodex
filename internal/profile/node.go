@@ -31,6 +31,7 @@ func (nodeProfile) Rules() Rules {
 			"build/",
 			"coverage/",
 			".cache/",
+			"package-lock.json",
 			"npm-debug.log*",
 			"yarn-debug.log*",
 			"yarn-error.log*",
@@ -38,5 +39,6 @@ func (nodeProfile) Rules() Rules {
 			".DS_Store",
 			"**/*.map",
 		},
+		IncludeExt: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
 	}
 }

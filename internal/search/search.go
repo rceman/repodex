@@ -43,7 +43,11 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 		maxPerFile = 2
 	}
 
-	cfg, _, err := config.Load(store.ConfigPath(root))
+	userCfg, _, err := config.LoadUserConfig(store.ConfigPath(root))
+	if err != nil {
+		return nil, err
+	}
+	cfg, _, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
 	if err != nil {
 		return nil, err
 	}

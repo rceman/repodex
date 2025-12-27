@@ -7,22 +7,12 @@ import (
 	"strings"
 )
 
-var defaultDirs = []string{
-	"node_modules/",
-	"dist/",
-	"build/",
-	".next/",
-	"coverage/",
-	".git/",
-	"out/",
-}
-
-// WriteDefaultIgnore writes the default ignore file.
-func WriteDefaultIgnore(path string) error {
+// WriteIgnore writes ignore patterns to the provided path.
+func WriteIgnore(path string, patterns []string) error {
 	builder := strings.Builder{}
-	for i, dir := range defaultDirs {
-		builder.WriteString(dir)
-		if i != len(defaultDirs)-1 {
+	for i, pattern := range patterns {
+		builder.WriteString(pattern)
+		if i != len(patterns)-1 {
 			builder.WriteByte('\n')
 		}
 	}

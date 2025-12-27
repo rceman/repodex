@@ -17,8 +17,8 @@ func TestFetchRespectsMaxLines(t *testing.T) {
 	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	cfg := config.DefaultConfig()
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	cfg := config.UserConfig{Profiles: []string{"ts_js", "node"}}
+	if err := config.SaveUserConfig(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("config save failed: %v", err)
 	}
 
@@ -63,8 +63,8 @@ func TestFetchEmptyFile(t *testing.T) {
 	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	cfg := config.DefaultConfig()
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	cfg := config.UserConfig{Profiles: []string{"ts_js", "node"}}
+	if err := config.SaveUserConfig(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("config save failed: %v", err)
 	}
 
@@ -102,8 +102,8 @@ func TestFetchTrailingNewline(t *testing.T) {
 	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	cfg := config.DefaultConfig()
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	cfg := config.UserConfig{Profiles: []string{"ts_js", "node"}}
+	if err := config.SaveUserConfig(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("config save failed: %v", err)
 	}
 
@@ -145,8 +145,8 @@ func TestFetchCRLF(t *testing.T) {
 	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	cfg := config.DefaultConfig()
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	cfg := config.UserConfig{Profiles: []string{"ts_js", "node"}}
+	if err := config.SaveUserConfig(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("config save failed: %v", err)
 	}
 

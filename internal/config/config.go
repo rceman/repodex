@@ -2,19 +2,18 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds the root configuration for Repodex.
 type Config struct {
-	IndexVersion int                `json:"IndexVersion"`
-	ProjectType  string             `json:"ProjectType"`
-	IncludeExt   []string           `json:"IncludeExt"`
-	ExcludeDirs  []string           `json:"ExcludeDirs"`
-	Scan         ScanConfig         `json:"Scan"`
-	Chunk        ChunkingConfig     `json:"Chunk"`
-	Token        TokenizationConfig `json:"Token"`
-	Limits       LimitsConfig       `json:"Limits"`
+	ProjectType string
+	Scan        ScanConfig
+	Chunk       ChunkingConfig
+	Token       TokenizationConfig
+	Limits      LimitsConfig
 }
 
 // ChunkingConfig configures how files are chunked.
@@ -47,13 +46,22 @@ type LimitsConfig struct {
 	MaxSnippetBytes int `json:"MaxSnippetBytes"`
 }
 
-// DefaultConfig returns a Config populated with defaults.
-func DefaultConfig() Config {
+const IndexVersion = 1
+
+const DefaultProjectType = "ts"
+
+// UserConfig holds user overrides stored on disk.
+type UserConfig struct {
+	Profiles []string        `json:"profiles"`
+	Scan     *ScanConfig     `json:"scan,omitempty"`
+	Chunk    *ChunkingConfig `json:"chunk,omitempty"`
+	Limits   *LimitsConfig   `json:"limits,omitempty"`
+}
+
+// DefaultRuntimeConfig returns a Config populated with defaults.
+func DefaultRuntimeConfig() Config {
 	return Config{
-		IndexVersion: 1,
-		ProjectType:  "ts",
-		IncludeExt:   []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
-		ExcludeDirs:  []string{"node_modules", "dist", "build", ".next", "coverage", ".git", "out"},
+		ProjectType: DefaultProjectType,
 		Scan: ScanConfig{
 			MaxTextFileSizeBytes: 1024 * 1024,
 		},
@@ -88,8 +96,8 @@ func defaultStopWords() []string {
 	}
 }
 
-// Save writes the config to the provided path in JSON format.
-func Save(path string, cfg Config) error {
+// SaveUserConfig writes the user config to disk.
+func SaveUserConfig(path string, cfg UserConfig) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -97,9 +105,9 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// Load reads a Config from disk and returns the parsed config along with the raw bytes.
-func Load(path string) (Config, []byte, error) {
-	var cfg Config
+// LoadUserConfig reads a user config from disk and returns the parsed config along with raw bytes.
+func LoadUserConfig(path string) (UserConfig, []byte, error) {
+	var cfg UserConfig
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, nil, err
@@ -107,13 +115,52 @@ func Load(path string) (Config, []byte, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, nil, err
 	}
-	applyDefaults(&cfg)
 	return cfg, data, nil
 }
 
-// applyDefaults fills in any missing fields introduced in newer versions.
-func applyDefaults(cfg *Config) {
-	if cfg.Scan.MaxTextFileSizeBytes == 0 {
-		cfg.Scan.MaxTextFileSizeBytes = 1024 * 1024
+// ApplyOverrides merges a user config into runtime defaults.
+func ApplyOverrides(defaults Config, user UserConfig) (Config, []string, error) {
+	profiles := sanitizeProfiles(user.Profiles)
+	if len(profiles) == 0 {
+		return Config{}, nil, fmt.Errorf("profiles are required in config.json")
 	}
+	cfg := defaults
+	if user.Scan != nil && user.Scan.MaxTextFileSizeBytes > 0 {
+		cfg.Scan.MaxTextFileSizeBytes = user.Scan.MaxTextFileSizeBytes
+	}
+	if user.Chunk != nil {
+		if user.Chunk.MaxLines > 0 {
+			cfg.Chunk.MaxLines = user.Chunk.MaxLines
+		}
+		if user.Chunk.OverlapLines > 0 {
+			cfg.Chunk.OverlapLines = user.Chunk.OverlapLines
+		}
+		if user.Chunk.MinChunkLines > 0 {
+			cfg.Chunk.MinChunkLines = user.Chunk.MinChunkLines
+		}
+	}
+	if user.Limits != nil && user.Limits.MaxSnippetBytes > 0 {
+		cfg.Limits.MaxSnippetBytes = user.Limits.MaxSnippetBytes
+	}
+	return cfg, profiles, nil
+}
+
+func sanitizeProfiles(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }

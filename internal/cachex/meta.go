@@ -11,10 +11,10 @@ import (
 
 // Meta captures cache-level metadata for validation.
 type Meta struct {
-	CacheVersion  string `json:"cache_version"`
-	SchemaVersion int    `json:"schema_version"`
-	ConfigHash    uint64 `json:"config_hash"`
-	ProjectType   string `json:"project_type"`
+	CacheVersion  string   `json:"cache_version"`
+	SchemaVersion int      `json:"schema_version"`
+	ConfigHash    uint64   `json:"config_hash"`
+	Profiles      []string `json:"profiles"`
 }
 
 // MetaPath returns the path to the cache metadata file.
@@ -64,7 +64,7 @@ func EnsureMeta(root string, want Meta) (bool, error) {
 		}
 		return false, nil
 	}
-	if existing != want {
+	if !metaEqual(existing, want) {
 		if err := Purge(root); err != nil {
 			return false, err
 		}
@@ -74,4 +74,21 @@ func EnsureMeta(root string, want Meta) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func metaEqual(a, b Meta) bool {
+	if a.CacheVersion != b.CacheVersion ||
+		a.SchemaVersion != b.SchemaVersion ||
+		a.ConfigHash != b.ConfigHash {
+		return false
+	}
+	if len(a.Profiles) != len(b.Profiles) {
+		return false
+	}
+	for i := range a.Profiles {
+		if a.Profiles[i] != b.Profiles[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -33,21 +33,19 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 		}
 	}
 
-	cfg := config.Config{
-		IncludeExt: []string{".ts"},
-		Chunk:      config.ChunkingConfig{MaxLines: 1, OverlapLines: 0, MinChunkLines: 1},
-		Token: config.TokenizationConfig{
-			MinTokenLen:            1,
-			MaxTokenLen:            64,
-			DropHexLen:             16,
-			TokenizeStringLiterals: true,
-			MaxFileBytesCode:       1024,
-		},
-		Scan:   config.ScanConfig{MaxTextFileSizeBytes: 2048},
-		Limits: config.LimitsConfig{MaxSnippetBytes: 200},
+	cfg := config.DefaultRuntimeConfig()
+	cfg.Chunk = config.ChunkingConfig{MaxLines: 1, OverlapLines: 0, MinChunkLines: 1}
+	cfg.Token = config.TokenizationConfig{
+		MinTokenLen:            1,
+		MaxTokenLen:            64,
+		DropHexLen:             16,
+		TokenizeStringLiterals: true,
+		MaxFileBytesCode:       1024,
 	}
+	cfg.Scan = config.ScanConfig{MaxTextFileSizeBytes: 2048}
+	cfg.Limits = config.LimitsConfig{MaxSnippetBytes: 200}
 
-	rules, err := profile.BuildEffectiveRules(root, cfg)
+	rules, err := profile.BuildEffectiveRules(root, []string{"ts_js", "node"}, cfg)
 	if err != nil {
 		t.Fatalf("rules: %v", err)
 	}

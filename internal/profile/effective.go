@@ -12,54 +12,44 @@ import (
 	"github.com/memkit/repodex/internal/hash"
 )
 
-// BuildEffectiveRules merges global defaults, profile rules, and user overrides.
-func BuildEffectiveRules(root string, cfg config.Config) (EffectiveRules, error) {
-	ctx := DetectContext{Root: root}
-	detected, err := DetectProfiles(ctx)
+// BuildEffectiveRules merges profile rules and user overrides.
+func BuildEffectiveRules(root string, profiles []string, cfg config.Config) (EffectiveRules, error) {
+	resolved, err := ResolveProfiles(profiles)
 	if err != nil {
 		return EffectiveRules{}, err
 	}
 
-	scanIgnore := append([]string{}, GlobalScanIgnore(detected.HasPackageJSON)...)
-	for _, p := range detected.Profiles {
-		if rules := p.Rules(); len(rules.ScanIgnore) > 0 {
-			scanIgnore = append(scanIgnore, rules.ScanIgnore...)
-		}
-	}
-	if userPatterns, err := loadScanIgnore(root); err == nil {
-		scanIgnore = append(scanIgnore, userPatterns...)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return EffectiveRules{}, fmt.Errorf("load .scanignore: %w", err)
-	}
-
-	tokenRules := mergeTokenRules(cfg.Token, detected.Profiles)
-	userToken, err := loadTokenizeOverride(root)
+	scanIgnore, err := loadScanIgnore(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return EffectiveRules{}, err
+		return EffectiveRules{}, fmt.Errorf("load .repodexignore: %w", err)
 	}
-	tokenRules = applyTokenizeOverride(tokenRules, userToken)
-	tokenCfg := tokenRules.ToConfig(cfg.Token)
+	if errors.Is(err, os.ErrNotExist) {
+		scanIgnore = buildDefaultIgnore(resolved)
+	}
 
-	detectedIDs := make([]string, 0, len(detected.Profiles))
-	for _, p := range detected.Profiles {
-		detectedIDs = append(detectedIDs, p.ID())
+	includeExt := mergeIncludeExt(resolved)
+	if len(includeExt) == 0 {
+		return EffectiveRules{}, fmt.Errorf("profiles do not define any include extensions")
 	}
+	tokenRules := mergeTokenRules(cfg.Token, resolved)
+	tokenCfg := tokenRules.ToConfig(cfg.Token)
 	scanSettings := ScanSettings{
 		MaxTextFileSizeBytes: cfg.Scan.MaxTextFileSizeBytes,
 	}
 
-	rulesHash, err := computeRulesHash(detectedIDs, scanIgnore, scanSettings, tokenRules)
+	rulesHash, err := computeRulesHash(profiles, scanIgnore, includeExt, scanSettings, tokenRules)
 	if err != nil {
 		return EffectiveRules{}, err
 	}
 
 	return EffectiveRules{
-		ScanIgnore:       scanIgnore,
-		Tokenize:         tokenRules,
-		TokenConfig:      tokenCfg,
-		DetectedProfiles: detectedIDs,
-		ScanSettings:     scanSettings,
-		RulesHash:        rulesHash,
+		ScanIgnore:   scanIgnore,
+		IncludeExt:   includeExt,
+		Tokenize:     tokenRules,
+		TokenConfig:  tokenCfg,
+		Profiles:     append([]string(nil), profiles...),
+		ScanSettings: scanSettings,
+		RulesHash:    rulesHash,
 	}, nil
 }
 
@@ -106,73 +96,34 @@ func mergeTokenRules(base config.TokenizationConfig, profiles []Profile) Tokeniz
 	return eff
 }
 
-type listOverride struct {
-	Mode   string   `json:"mode" yaml:"mode"`
-	Values []string `json:"values" yaml:"values"`
-}
-
-type tokenizeOverride struct {
-	PathStripSuffixes *listOverride `json:"path_strip_suffixes" yaml:"path_strip_suffixes"`
-	PathStripExts     *listOverride `json:"path_strip_exts" yaml:"path_strip_exts"`
-	StopWords         *listOverride `json:"stop_words" yaml:"stop_words"`
-	AllowShortTokens  *listOverride `json:"allow_short_tokens" yaml:"allow_short_tokens"`
-	MinTokenLen       *int          `json:"min_token_len" yaml:"min_token_len"`
-	MaxTokenLen       *int          `json:"max_token_len" yaml:"max_token_len"`
-	DropHexLen        *int          `json:"drop_hex_len" yaml:"drop_hex_len"`
-	TokenizeStrings   *bool         `json:"tokenize_string_literals" yaml:"tokenize_string_literals"`
-	AllowShortTokensB *bool         `json:"allow_short_tokens_enabled,omitempty" yaml:"allow_short_tokens_enabled,omitempty"` // reserved
-}
-
-func parseTokenizeOverride(data []byte) (tokenizeOverride, error) {
-	var cfg tokenizeOverride
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return tokenizeOverride{}, fmt.Errorf("parse tokenize override: %w", err)
-	}
-	return cfg, nil
-}
-
-func loadTokenizeOverride(root string) (tokenizeOverride, error) {
-	path := filepath.Join(root, ".repodex", "tokenize.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return tokenizeOverride{}, err
-	}
-	return parseTokenizeOverride(data)
-}
-
-func applyTokenizeOverride(base TokenizeRules, user tokenizeOverride) TokenizeRules {
-	applyList := func(current []string, override *listOverride) []string {
-		if override == nil {
-			return current
-		}
-		mode := strings.ToLower(strings.TrimSpace(override.Mode))
-		switch mode {
-		case "replace":
-			return append([]string{}, override.Values...)
-		case "append", "":
-			return append(current, override.Values...)
-		default:
-			return current
+func mergeIncludeExt(profiles []Profile) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, p := range profiles {
+		r := p.Rules()
+		for _, ext := range r.IncludeExt {
+			normalized := strings.ToLower(strings.TrimSpace(ext))
+			if normalized == "" {
+				continue
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			out = append(out, normalized)
 		}
 	}
-	base.PathStripSuffixes = applyList(base.PathStripSuffixes, user.PathStripSuffixes)
-	base.PathStripExts = applyList(base.PathStripExts, user.PathStripExts)
-	base.StopWords = applyList(base.StopWords, user.StopWords)
-	base.AllowShortTokens = applyList(base.AllowShortTokens, user.AllowShortTokens)
+	return out
+}
 
-	if user.MinTokenLen != nil && *user.MinTokenLen > 0 {
-		base.MinTokenLen = *user.MinTokenLen
+func buildDefaultIgnore(profiles []Profile) []string {
+	patterns := append([]string{}, GlobalScanIgnore()...)
+	for _, p := range profiles {
+		if rules := p.Rules(); len(rules.ScanIgnore) > 0 {
+			patterns = append(patterns, rules.ScanIgnore...)
+		}
 	}
-	if user.MaxTokenLen != nil && *user.MaxTokenLen > 0 {
-		base.MaxTokenLen = *user.MaxTokenLen
-	}
-	if user.DropHexLen != nil && *user.DropHexLen > 0 {
-		base.DropHexLen = *user.DropHexLen
-	}
-	if user.TokenizeStrings != nil {
-		base.TokenizeStrings = user.TokenizeStrings
-	}
-	return base
+	return patterns
 }
 
 // ToConfig converts tokenization rules into a TokenizationConfig using base defaults.
@@ -198,7 +149,7 @@ func (t TokenizeRules) ToConfig(base config.TokenizationConfig) config.Tokenizat
 }
 
 func loadScanIgnore(root string) ([]string, error) {
-	path := filepath.Join(root, ".scanignore")
+	path := filepath.Join(root, ".repodexignore")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -215,17 +166,19 @@ func loadScanIgnore(root string) ([]string, error) {
 	return patterns, nil
 }
 
-func computeRulesHash(profiles []string, scanIgnore []string, scanSettings ScanSettings, tokenize TokenizeRules) (uint64, error) {
+func computeRulesHash(profiles []string, scanIgnore []string, includeExt []string, scanSettings ScanSettings, tokenize TokenizeRules) (uint64, error) {
 	state := struct {
 		SchemaVersion int
 		Profiles      []string
 		ScanIgnore    []string
+		IncludeExt    []string
 		ScanSettings  ScanSettings
 		Tokenize      TokenizeRules
 	}{
 		SchemaVersion: SchemaVersion,
 		Profiles:      append([]string(nil), profiles...),
 		ScanIgnore:    append([]string(nil), scanIgnore...),
+		IncludeExt:    append([]string(nil), includeExt...),
 		ScanSettings:  scanSettings,
 		Tokenize:      tokenize,
 	}

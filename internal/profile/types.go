@@ -19,6 +19,7 @@ type Profile interface {
 // Rules captures scan and tokenization rules for a profile.
 type Rules struct {
 	ScanIgnore []string
+	IncludeExt []string
 	Tokenize   TokenizeRules
 }
 
@@ -48,12 +49,13 @@ func (c DetectContext) Join(parts ...string) string {
 
 // EffectiveRules represents the merged scan and tokenization rules.
 type EffectiveRules struct {
-	ScanIgnore       []string
-	Tokenize         TokenizeRules
-	TokenConfig      config.TokenizationConfig
-	DetectedProfiles []string
-	ScanSettings     ScanSettings
-	RulesHash        uint64
+	ScanIgnore   []string
+	IncludeExt   []string
+	Tokenize     TokenizeRules
+	TokenConfig  config.TokenizationConfig
+	Profiles     []string
+	ScanSettings ScanSettings
+	RulesHash    uint64
 }
 
 // ScanSettings captures scan-level knobs.

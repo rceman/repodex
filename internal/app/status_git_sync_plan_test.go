@@ -21,8 +21,8 @@ func TestGitChangeDetectionAndSyncPlan(t *testing.T) {
 	runGit(t, root, "config", "user.email", "test@example.com")
 	runGit(t, root, "config", "user.name", "Test User")
 
-	// Ignore .repodex to keep the worktree clean after syncs.
-	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".repodex\n"), 0o644); err != nil {
+	// Ignore repodex artifacts to keep the worktree clean after syncs.
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".repodex\n.repodexignore\n"), 0o644); err != nil {
 		t.Fatalf("failed to write gitignore: %v", err)
 	}
 
@@ -277,5 +277,15 @@ func assertDirtyMatchesPlan(t *testing.T, resp StatusResponse) {
 	wantDirty := resp.SyncPlan.Mode != statusx.ModeNoop
 	if resp.Dirty != wantDirty {
 		t.Fatalf("expected Dirty=%v to match SyncPlan mode %s", wantDirty, resp.SyncPlan.Mode)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
 }

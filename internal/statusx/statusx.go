@@ -103,7 +103,7 @@ func IsValidWhy(why string) bool {
 
 const MaxChangedPaths = 200
 
-func CollectGitInfo(root string, baseHead string) GitInfo {
+func CollectGitInfo(root string, baseHead string, allowExts []string) GitInfo {
 	info := GitInfo{
 		BaseHead: baseHead,
 	}
@@ -146,7 +146,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 		if len(paths) > 0 {
 			repodexOnly := true
 			for _, p := range paths {
-				if p == ".repodex" || strings.HasPrefix(p, ".repodex/") {
+				if p == ".repodex" || strings.HasPrefix(p, ".repodex/") || p == ".repodexignore" {
 					continue
 				}
 				repodexOnly = false
@@ -155,7 +155,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 			info.DirtyRepodexOnly = repodexOnly
 		}
 		// Use porcelain paths as the single source for worktree change paths (staged/unstaged/untracked).
-		addChangedPaths(changedSet, paths)
+		addChangedPaths(changedSet, paths, allowExts)
 	}
 
 	headChanged := info.BaseHead != "" && info.CurrentHead != "" && info.BaseHead != info.CurrentHead
@@ -165,7 +165,7 @@ func CollectGitInfo(root string, baseHead string) GitInfo {
 		if err != nil {
 			gitErr = true
 		} else {
-			addChangedPaths(changedSet, paths)
+			addChangedPaths(changedSet, paths, allowExts)
 		}
 	}
 	info.ChangedPathCount = len(changedSet)
@@ -246,37 +246,45 @@ func BuildSyncPlan(meta store.Meta, cfgHash uint64, info GitInfo) *SyncPlan {
 	return plan
 }
 
-func addChangedPaths(set map[string]struct{}, paths []string) {
+func addChangedPaths(set map[string]struct{}, paths []string, allowExts []string) {
 	for _, p := range paths {
 		p = filepath.ToSlash(strings.TrimSpace(p))
 		if p == "" {
 			continue
 		}
-		if !isIndexableChangedPath(p) {
+		if !isIndexableChangedPath(p, allowExts) {
 			continue
 		}
 		set[p] = struct{}{}
 	}
 }
 
-func isIndexableChangedPath(p string) bool {
+func isIndexableChangedPath(p string, allowExts []string) bool {
 	p = filepath.ToSlash(p)
 	if p == "" {
 		return false
 	}
 	// Never treat index artifacts as content changes.
-	if p == ".repodex" || strings.HasPrefix(p, ".repodex/") {
+	if p == ".repodex" || strings.HasPrefix(p, ".repodex/") || p == ".repodexignore" {
 		return false
 	}
 	if strings.HasSuffix(p, ".d.ts") {
 		return false
 	}
-	return strings.HasSuffix(p, ".ts") ||
-		strings.HasSuffix(p, ".tsx") ||
-		strings.HasSuffix(p, ".js") ||
-		strings.HasSuffix(p, ".jsx") ||
-		strings.HasSuffix(p, ".mjs") ||
-		strings.HasSuffix(p, ".cjs")
+	return matchesExt(p, allowExts)
+}
+
+func matchesExt(path string, allowExts []string) bool {
+	if len(allowExts) == 0 {
+		return true
+	}
+	lower := strings.ToLower(path)
+	for _, ext := range allowExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedLimitedPaths(set map[string]struct{}, limit int) []string {

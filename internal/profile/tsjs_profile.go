@@ -60,6 +60,7 @@ func (tsjsProfile) Detect(ctx DetectContext) (bool, error) {
 func (tsjsProfile) Rules() Rules {
 	return Rules{
 		ScanIgnore: []string{"**/*.map"},
+		IncludeExt: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
 		Tokenize: TokenizeRules{
 			PathStripSuffixes: []string{".d.ts.map", ".d.tsx", ".d.ts"},
 			PathStripExts:     []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},

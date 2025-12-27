@@ -14,7 +14,7 @@ func ConfigPath(root string) string {
 }
 
 func IgnorePath(root string) string {
-	return filepath.Join(Dir(root), "ignore")
+	return filepath.Join(root, ".repodexignore")
 }
 
 func MetaPath(root string) string {

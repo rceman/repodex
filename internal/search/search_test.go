@@ -7,7 +7,6 @@ import (
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
-	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/store"
 )
 
@@ -86,9 +85,8 @@ func createIndex(t *testing.T, root string, files []index.FileEntry, chunks []in
 	if err := os.MkdirAll(store.Dir(root), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	cfg := config.DefaultConfig()
-	cfg.ProjectType = factory.ProjectTypeTS
-	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
+	cfg := config.UserConfig{Profiles: []string{"ts_js", "node"}}
+	if err := config.SaveUserConfig(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("config save failed: %v", err)
 	}
 	if err := index.Serialize(root, files, chunks, postings); err != nil {

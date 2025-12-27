@@ -16,6 +16,26 @@ type DetectResult struct {
 	HasPackageJSON bool
 }
 
+// ResolveProfiles returns profiles in the provided order, validating IDs.
+func ResolveProfiles(ids []string) ([]Profile, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("profiles list is empty")
+	}
+	byID := make(map[string]Profile, len(registry))
+	for _, p := range registry {
+		byID[p.ID()] = p
+	}
+	out := make([]Profile, 0, len(ids))
+	for _, id := range ids {
+		p, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("unknown profile %q", id)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 // DetectProfiles runs detection in registry order.
 func DetectProfiles(ctx DetectContext) (DetectResult, error) {
 	var enabled []Profile

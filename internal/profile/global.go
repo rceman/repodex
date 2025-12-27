@@ -67,16 +67,12 @@ var knownBinarySuffixes = map[string]struct{}{
 }
 
 // GlobalScanIgnore returns default scan ignores.
-func GlobalScanIgnore(hasPackageJSON bool) []string {
-	patterns := []string{
+func GlobalScanIgnore() []string {
+	return []string{
 		"**/*.svg",
 		".git/",
 		".repodex/",
 	}
-	if hasPackageJSON {
-		patterns = append(patterns, "package-lock.json")
-	}
-	return patterns
 }
 
 // IsKnownBinaryExt reports whether the path matches a known binary extension or suffix.
