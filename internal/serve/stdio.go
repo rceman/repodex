@@ -94,12 +94,13 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				break
 			}
 			cfg, _, chunks, chunkMap, terms, postings := cache.Get()
-			results, err := search.SearchWithIndex(cfg, chunks, chunkMap, terms, postings, req.Q, search.Options{TopK: req.TopK})
+			results, err := search.SearchWithIndex(root, cfg, chunks, chunkMap, terms, postings, req.Q, search.Options{TopK: req.TopK})
 			if err != nil {
 				resp.OK = false
 				resp.Error = err.Error()
 				break
 			}
+			search.RoundScores(results)
 			resp.Data = results
 		case "fetch":
 			if len(req.IDs) == 0 {

@@ -17,6 +17,8 @@ type Command struct {
 	TopK       int
 	IDs        []uint32
 	MaxLines   int
+	Score      bool
+	NoFormat   bool
 }
 
 // Parse converts argv into a Command description.
@@ -80,6 +82,15 @@ func Parse(args []string) (Command, error) {
 				}
 				c.TopK = val
 				i += 2
+			case "--json":
+				c.JSON = true
+				i++
+			case "--no-format":
+				c.NoFormat = true
+				i++
+			case "--score":
+				c.Score = true
+				i++
 			default:
 				return Command{}, fmt.Errorf("unknown flag %s", args[i])
 			}

@@ -3,12 +3,17 @@ package search
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/store"
+	"github.com/memkit/repodex/internal/textutil"
 	"github.com/memkit/repodex/internal/tokenize"
 )
 
@@ -69,11 +74,11 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 		return nil, err
 	}
 
-	return SearchWithIndex(cfg, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
+	return SearchWithIndex(root, cfg, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
 }
 
 // SearchWithIndex executes a keyword search using provided index data.
-func SearchWithIndex(cfg config.Config, chunks []index.ChunkEntry, chunkMap map[uint32]index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
+func SearchWithIndex(root string, cfg config.Config, chunks []index.ChunkEntry, chunkMap map[uint32]index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
 	topK := opts.TopK
 	if topK <= 0 {
 		topK = 20
@@ -169,5 +174,100 @@ func SearchWithIndex(cfg config.Config, chunks []index.ChunkEntry, chunkMap map[
 		}
 	}
 
+	if root != "" {
+		enrichSnippets(root, filtered, cfg.Limits.MaxSnippetBytes)
+	}
+
 	return filtered, nil
+}
+
+func enrichSnippets(root string, results []Result, maxBytes int) {
+	if len(results) == 0 {
+		return
+	}
+	lineCache := make(map[string][]string)
+	for i := range results {
+		r := &results[i]
+		if len(r.Why) == 0 {
+			continue
+		}
+		lines, ok := lineCache[r.Path]
+		if !ok {
+			abs := filepath.Join(root, filepath.FromSlash(r.Path))
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				lineCache[r.Path] = nil
+				continue
+			}
+			normalized := textutil.NormalizeNewlinesBytes(data)
+			lines = strings.Split(string(normalized), "\n")
+			lineCache[r.Path] = lines
+		}
+		if lines == nil {
+			continue
+		}
+		snippet := extractTermSnippet(lines, int(r.StartLine), int(r.EndLine), r.Why, maxBytes)
+		if snippet != "" {
+			r.Snippet = snippet
+		}
+	}
+}
+
+func extractTermSnippet(lines []string, start, end int, terms []string, maxBytes int) string {
+	if start < 1 {
+		start = 1
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > end {
+		return ""
+	}
+	lowerTerms := make([]string, 0, len(terms))
+	for _, t := range terms {
+		trimmed := strings.ToLower(strings.TrimSpace(t))
+		if trimmed != "" {
+			lowerTerms = append(lowerTerms, trimmed)
+		}
+	}
+	if len(lowerTerms) == 0 {
+		return ""
+	}
+
+	var picked []string
+	for i := start - 1; i < end && len(picked) < 3; i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		for _, term := range lowerTerms {
+			if strings.Contains(lower, term) {
+				picked = append(picked, line)
+				break
+			}
+		}
+	}
+	if len(picked) == 0 {
+		return ""
+	}
+	snippet := strings.Join(picked, "\n")
+	if maxBytes > 0 {
+		b := []byte(snippet)
+		if len(b) > maxBytes {
+			b = b[:maxBytes]
+			for len(b) > 0 && !utf8.Valid(b) {
+				b = b[:len(b)-1]
+			}
+			snippet = string(b)
+		}
+	}
+	return snippet
+}
+
+// RoundScores rounds result scores to two decimal places for display.
+func RoundScores(results []Result) {
+	for i := range results {
+		results[i].Score = math.Round(results[i].Score*100) / 100
+	}
 }
