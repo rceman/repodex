@@ -56,15 +56,6 @@ type StatusResponse struct {
 	SyncPlan            *statusx.SyncPlan `json:"sync_plan,omitempty"`
 }
 
-type legacyStatusResponse struct {
-	StatusResponse
-	GitRepo       bool   `json:"git_repo,omitempty"`
-	RepoHead      string `json:"repo_head,omitempty"`
-	CurrentHead   string `json:"current_head,omitempty"`
-	WorktreeClean bool   `json:"worktree_clean,omitempty"`
-	HeadMatches   bool   `json:"head_matches,omitempty"`
-}
-
 // Run executes the CLI app and returns an exit code.
 func Run(args []string) int {
 	cmd, err := cli.Parse(args)
@@ -480,7 +471,7 @@ func runStatus(root string, jsonOut bool) error {
 func outputStatus(resp StatusResponse, jsonOut bool) error {
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
-		return enc.Encode(legacyFromStatus(resp))
+		return enc.Encode(resp)
 	}
 	if _, err := fmt.Printf("Indexed: %v\nDirty: %v\nChanged files: %d\n", resp.Indexed, resp.Dirty, resp.ChangedFiles); err != nil {
 		return err
@@ -669,19 +660,6 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 	}
 }
 
-func legacyFromStatus(resp StatusResponse) legacyStatusResponse {
-	gitRepo := resp.GitChangedReason != ""
-	headMatches := resp.GitBaseHead != "" && resp.GitCurrentHead != "" && resp.GitBaseHead == resp.GitCurrentHead
-	return legacyStatusResponse{
-		StatusResponse: resp,
-		GitRepo:        gitRepo,
-		RepoHead:       resp.GitBaseHead,
-		CurrentHead:    resp.GitCurrentHead,
-		WorktreeClean:  resp.GitWorktreeClean,
-		HeadMatches:    headMatches,
-	}
-}
-
 func combinedConfigHash(cfg config.Config, rulesHash uint64) (uint64, error) {
 	state := struct {
 		Chunk     config.ChunkingConfig
@@ -703,21 +681,13 @@ func combinedConfigHash(cfg config.Config, rulesHash uint64) (uint64, error) {
 
 func runServeStdio(root string) error {
 	statusFn := func() (interface{}, error) {
-		resp, err := computeStatusResolved(root)
-		if err != nil {
-			return nil, err
-		}
-		return legacyFromStatus(resp), nil
+		return computeStatusResolved(root)
 	}
 	syncFn := func() (interface{}, error) {
 		if err := runIndexSync(root); err != nil {
 			return nil, err
 		}
-		resp, err := computeStatusResolved(root)
-		if err != nil {
-			return nil, err
-		}
-		return legacyFromStatus(resp), nil
+		return computeStatusResolved(root)
 	}
 	return serve.ServeStdio(root, statusFn, syncFn)
 }
