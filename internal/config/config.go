@@ -11,6 +11,7 @@ type Config struct {
 	ProjectType  string             `json:"ProjectType"`
 	IncludeExt   []string           `json:"IncludeExt"`
 	ExcludeDirs  []string           `json:"ExcludeDirs"`
+	Scan         ScanConfig         `json:"Scan"`
 	Chunk        ChunkingConfig     `json:"Chunk"`
 	Token        TokenizationConfig `json:"Token"`
 	Limits       LimitsConfig       `json:"Limits"`
@@ -32,6 +33,13 @@ type TokenizationConfig struct {
 	StopWords              []string `json:"StopWords"`
 	TokenizeStringLiterals bool     `json:"TokenizeStringLiterals"`
 	MaxFileBytesCode       int64    `json:"MaxFileBytesCode"`
+	PathStripSuffixes      []string `json:"PathStripSuffixes"`
+	PathStripExts          []string `json:"PathStripExts"`
+}
+
+// ScanConfig controls scanning behavior.
+type ScanConfig struct {
+	MaxTextFileSizeBytes int64 `json:"MaxTextFileSizeBytes"`
 }
 
 // LimitsConfig controls output limits.
@@ -44,8 +52,11 @@ func DefaultConfig() Config {
 	return Config{
 		IndexVersion: 1,
 		ProjectType:  "ts",
-		IncludeExt:   []string{".ts", ".tsx"},
+		IncludeExt:   []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
 		ExcludeDirs:  []string{"node_modules", "dist", "build", ".next", "coverage", ".git", "out"},
+		Scan: ScanConfig{
+			MaxTextFileSizeBytes: 1024 * 1024,
+		},
 		Chunk: ChunkingConfig{
 			MaxLines:      200,
 			OverlapLines:  20,
@@ -96,5 +107,13 @@ func Load(path string) (Config, []byte, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, nil, err
 	}
+	applyDefaults(&cfg)
 	return cfg, data, nil
+}
+
+// applyDefaults fills in any missing fields introduced in newer versions.
+func applyDefaults(cfg *Config) {
+	if cfg.Scan.MaxTextFileSizeBytes == 0 {
+		cfg.Scan.MaxTextFileSizeBytes = 1024 * 1024
+	}
 }

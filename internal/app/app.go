@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/factory"
+	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/scan"
 	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/serve"
@@ -167,7 +169,11 @@ func runInit(root string, force bool) error {
 	if err != nil {
 		return err
 	}
-	cfgHash := hash.Sum64(cfgBytes)
+	rules, err := profile.BuildEffectiveRules(root, cfg)
+	if err != nil {
+		return err
+	}
+	cfgHash := combinedConfigHash(cfgBytes, rules.RulesHash)
 	meta := store.NewMeta(cfg.IndexVersion, 0, 0, 0, cfgHash, repoHead)
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
@@ -204,7 +210,7 @@ func precomputedFromCache(entry cachex.CacheEntry) (index.PrecomputedFile, error
 	}, nil
 }
 
-func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Config) (index.PrecomputedFile, cachex.CacheEntry, error) {
+func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Config, tokenCfg config.TokenizationConfig) (index.PrecomputedFile, cachex.CacheEntry, error) {
 	content, err := os.ReadFile(ref.AbsPath)
 	if err != nil {
 		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
@@ -217,11 +223,11 @@ func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Co
 		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
 	}
 	lines := strings.Split(string(normalized), "\n")
-	tokenizer := tokenize.New(cfg.Token)
+	tokenizer := tokenize.New(tokenCfg)
 	pathTokens := tokenizer.Path(ref.RelPath)
 
 	lineTokens := make([][]string, len(lines))
-	if cfg.Token.TokenizeStringLiterals {
+	if tokenCfg.TokenizeStringLiterals {
 		for i, line := range lines {
 			lineTokens[i] = tokenizer.Text(line)
 		}
@@ -306,14 +312,11 @@ func runIndexSync(root string) error {
 	if err != nil {
 		return err
 	}
-	cfgHash := hash.Sum64(cfgBytes)
-
-	var ignoreDirs []string
-	if dirs, err := ignore.LoadDirs(store.IgnorePath(root)); err == nil {
-		ignoreDirs = dirs
-	} else if !os.IsNotExist(err) {
+	rules, err := profile.BuildEffectiveRules(root, cfg)
+	if err != nil {
 		return err
 	}
+	cfgHash := combinedConfigHash(cfgBytes, rules.RulesHash)
 
 	plugin, err := factory.FromProjectType(cfg.ProjectType)
 	if err != nil {
@@ -324,7 +327,7 @@ func runIndexSync(root string) error {
 	fullRebuild := true
 	if st.SyncPlan != nil {
 		for _, p := range st.SyncPlan.ChangedPaths {
-			changedSet[ignore.NormalizePath(p)] = struct{}{}
+			changedSet[filepath.ToSlash(p)] = struct{}{}
 		}
 		fullRebuild = st.SyncPlan.Why == statusx.WhyMissingIndex ||
 			st.SyncPlan.Why == statusx.WhySchemaChanged ||
@@ -348,7 +351,7 @@ func runIndexSync(root string) error {
 		fullRebuild = true
 	}
 
-	refs, err := scan.WalkRefs(root, cfg, ignoreDirs)
+	refs, err := scan.WalkRefs(root, cfg, rules)
 	if err != nil {
 		return err
 	}
@@ -374,7 +377,7 @@ func runIndexSync(root string) error {
 			}
 		}
 
-		file, cacheEntry, err := buildCacheEntry(ref, plugin, cfg)
+		file, cacheEntry, err := buildCacheEntry(ref, plugin, cfg, rules.TokenConfig)
 		if err != nil {
 			return err
 		}
@@ -524,11 +527,15 @@ func computeStatusResolved(root string) (StatusResponse, error) {
 		return StatusResponse{}, fmt.Errorf("repodex requires a git repository")
 	}
 
-	_, cfgBytes, err := config.Load(cfgPath)
+	cfg, cfgBytes, err := config.Load(cfgPath)
 	if err != nil {
 		return StatusResponse{}, err
 	}
-	cfgHash := hash.Sum64(cfgBytes)
+	rules, err := profile.BuildEffectiveRules(root, cfg)
+	if err != nil {
+		return StatusResponse{}, err
+	}
+	cfgHash := combinedConfigHash(cfgBytes, rules.RulesHash)
 
 	plan := statusx.BuildSyncPlan(meta, cfgHash, gitInfo)
 
@@ -570,6 +577,14 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 		resp.GitChangedPathCount = 0
 		resp.GitChangedIndexable = false
 	}
+}
+
+func combinedConfigHash(cfgBytes []byte, rulesHash uint64) uint64 {
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, rulesHash)
+	payload := append([]byte{}, cfgBytes...)
+	payload = append(payload, buf...)
+	return hash.Sum64(payload)
 }
 
 func runServeStdio(root string) error {

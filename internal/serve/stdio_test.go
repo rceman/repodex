@@ -5,6 +5,7 @@ package serve
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,9 +18,9 @@ import (
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/fetch"
 	"github.com/memkit/repodex/internal/hash"
-	"github.com/memkit/repodex/internal/ignore"
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang/factory"
+	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/scan"
 	"github.com/memkit/repodex/internal/search"
 	"github.com/memkit/repodex/internal/store"
@@ -476,20 +477,22 @@ func buildTestIndex(t *testing.T, root string) {
 	if err := config.Save(store.ConfigPath(root), cfg); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
-	if err := ignore.WriteDefaultIgnore(store.IgnorePath(root)); err != nil {
-		t.Fatalf("write ignore: %v", err)
-	}
 
 	cfgBytes, err := os.ReadFile(store.ConfigPath(root))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
+	rules, err := profile.BuildEffectiveRules(root, cfg)
+	if err != nil {
+		t.Fatalf("build rules: %v", err)
+	}
+	cfg.Token = rules.TokenConfig
 	plugin, err := factory.FromProjectType(cfg.ProjectType)
 	if err != nil {
 		t.Fatalf("plugin: %v", err)
 	}
 
-	files, err := scan.Walk(root, cfg, nil)
+	files, err := scan.Walk(root, cfg, rules)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -501,7 +504,10 @@ func buildTestIndex(t *testing.T, root string) {
 	if err := index.Serialize(root, fileEntries, chunkEntries, postings); err != nil {
 		t.Fatalf("serialize index: %v", err)
 	}
-	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), hash.Sum64(cfgBytes), "")
+	buf := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buf, rules.RulesHash)
+	cfgHash := hash.Sum64(append(cfgBytes, buf...))
+	meta := store.NewMeta(cfg.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, "")
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		t.Fatalf("save meta: %v", err)
 	}

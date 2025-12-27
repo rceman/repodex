@@ -11,6 +11,7 @@ import (
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang/ts"
+	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/scan"
 )
 
@@ -42,10 +43,17 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 			TokenizeStringLiterals: true,
 			MaxFileBytesCode:       1024,
 		},
+		Scan:   config.ScanConfig{MaxTextFileSizeBytes: 2048},
 		Limits: config.LimitsConfig{MaxSnippetBytes: 200},
 	}
 
-	firstScan, err := scan.Walk(root, cfg, nil)
+	rules, err := profile.BuildEffectiveRules(root, cfg)
+	if err != nil {
+		t.Fatalf("rules: %v", err)
+	}
+	cfg.Token = rules.TokenConfig
+
+	firstScan, err := scan.Walk(root, cfg, rules)
 	if err != nil {
 		t.Fatalf("first walk: %v", err)
 	}
@@ -54,7 +62,7 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 			t.Fatalf("unexpected map artifact indexed: %s", f.Path)
 		}
 	}
-	secondScan, err := scan.Walk(root, cfg, nil)
+	secondScan, err := scan.Walk(root, cfg, rules)
 	if err != nil {
 		t.Fatalf("second walk: %v", err)
 	}
