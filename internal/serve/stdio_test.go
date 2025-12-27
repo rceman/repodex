@@ -485,16 +485,16 @@ func buildTestIndex(t *testing.T, root string) {
 		t.Fatalf("build rules: %v", err)
 	}
 	cfg.Token = rules.TokenConfig
-	plugin, err := factory.FromProjectType(cfg.ProjectType)
-	if err != nil {
-		t.Fatalf("plugin: %v", err)
+	plugins := factory.PluginsForProfiles(profiles)
+	if len(plugins) == 0 {
+		t.Fatalf("plugin: no language plugins for profiles")
 	}
 
 	files, err := scan.Walk(root, rules)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	fileEntries, chunkEntries, postings, err := index.Build(files, plugin, cfg)
+	fileEntries, chunkEntries, postings, err := index.Build(files, plugins, cfg)
 	if err != nil {
 		t.Fatalf("build index: %v", err)
 	}

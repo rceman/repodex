@@ -7,10 +7,9 @@ import (
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
-	"github.com/memkit/repodex/internal/lang"
-	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/store"
+	"github.com/memkit/repodex/internal/tokenize"
 )
 
 // Options controls search behavior.
@@ -57,11 +56,6 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 		return nil, err
 	}
 	cfg = profile.ApplyRules(cfg, rules)
-	plugin, err := factory.FromProjectType(cfg.ProjectType)
-	if err != nil {
-		return nil, err
-	}
-
 	chunks, err := index.LoadChunkEntries(store.ChunksPath(root))
 	if err != nil {
 		return nil, err
@@ -75,11 +69,11 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 		return nil, err
 	}
 
-	return SearchWithIndex(cfg, plugin, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
+	return SearchWithIndex(cfg, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
 }
 
 // SearchWithIndex executes a keyword search using provided index data.
-func SearchWithIndex(cfg config.Config, plugin lang.LanguagePlugin, chunks []index.ChunkEntry, chunkMap map[uint32]index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
+func SearchWithIndex(cfg config.Config, chunks []index.ChunkEntry, chunkMap map[uint32]index.ChunkEntry, terms map[string]index.TermInfo, postings []uint32, q string, opts Options) ([]Result, error) {
 	topK := opts.TopK
 	if topK <= 0 {
 		topK = 20
@@ -92,7 +86,7 @@ func SearchWithIndex(cfg config.Config, plugin lang.LanguagePlugin, chunks []ind
 		maxPerFile = 2
 	}
 
-	tokens := plugin.TokenizeChunk("", q, cfg.Token)
+	tokens := tokenize.New(cfg.Token).Text(q)
 	uniqueTerms := make([]string, 0, len(tokens))
 	seen := make(map[string]struct{})
 	for _, tok := range tokens {

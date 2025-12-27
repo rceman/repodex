@@ -93,8 +93,8 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				resp.Error = err.Error()
 				break
 			}
-			cfg, _, plugin, chunks, chunkMap, terms, postings := cache.Get()
-			results, err := search.SearchWithIndex(cfg, plugin, chunks, chunkMap, terms, postings, req.Q, search.Options{TopK: req.TopK})
+			cfg, _, chunks, chunkMap, terms, postings := cache.Get()
+			results, err := search.SearchWithIndex(cfg, chunks, chunkMap, terms, postings, req.Q, search.Options{TopK: req.TopK})
 			if err != nil {
 				resp.OK = false
 				resp.Error = err.Error()
@@ -116,7 +116,7 @@ func ServeStdio(root string, statusFn func() (interface{}, error), syncFn func()
 				resp.Error = err.Error()
 				break
 			}
-			_, _, _, _, chunkMap, _, _ := cache.Get()
+			_, _, _, chunkMap, _, _ := cache.Get()
 			results, err := fetch.FetchWithChunkMap(root, chunkMap, ids, req.MaxLines)
 			if err != nil {
 				resp.OK = false

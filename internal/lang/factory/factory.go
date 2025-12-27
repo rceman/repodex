@@ -1,20 +1,32 @@
 package factory
 
 import (
-	"fmt"
-
 	"github.com/memkit/repodex/internal/lang"
+	golang "github.com/memkit/repodex/internal/lang/go"
 	"github.com/memkit/repodex/internal/lang/ts"
 )
 
-const ProjectTypeTS = "ts"
-
-// FromProjectType returns a language plugin based on project type.
-func FromProjectType(projectType string) (lang.LanguagePlugin, error) {
-	switch projectType {
-	case ProjectTypeTS:
-		return ts.TSPlugin{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported project type: %s", projectType)
+// PluginsForProfiles returns language plugins in the order of the provided profiles.
+func PluginsForProfiles(profiles []string) []lang.LanguagePlugin {
+	seen := make(map[string]struct{})
+	var out []lang.LanguagePlugin
+	for _, p := range profiles {
+		switch p {
+		case "ts_js":
+			plugin := ts.TSPlugin{}
+			if _, ok := seen[plugin.ID()]; ok {
+				continue
+			}
+			seen[plugin.ID()] = struct{}{}
+			out = append(out, plugin)
+		case "go":
+			plugin := golang.GoPlugin{}
+			if _, ok := seen[plugin.ID()]; ok {
+				continue
+			}
+			seen[plugin.ID()] = struct{}{}
+			out = append(out, plugin)
+		}
 	}
+	return out
 }

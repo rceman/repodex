@@ -10,6 +10,7 @@ import (
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
+	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/ts"
 	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/scan"
@@ -73,12 +74,12 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
 	})
 
-	plugin := ts.TSPlugin{}
-	files1, chunks1, postings1, err := index.Build(firstScan, plugin, cfg)
+	plugins := []lang.LanguagePlugin{ts.TSPlugin{}}
+	files1, chunks1, postings1, err := index.Build(firstScan, plugins, cfg)
 	if err != nil {
 		t.Fatalf("build from first scan: %v", err)
 	}
-	files2, chunks2, postings2, err := index.Build(shuffled, plugin, cfg)
+	files2, chunks2, postings2, err := index.Build(shuffled, plugins, cfg)
 	if err != nil {
 		t.Fatalf("build from shuffled scan: %v", err)
 	}

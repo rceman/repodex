@@ -16,3 +16,13 @@ type LanguagePlugin interface {
 	ChunkFile(path string, content []byte, cfg config.ChunkingConfig, limits config.LimitsConfig) ([]ChunkDraft, error)
 	TokenizeChunk(path string, chunkText string, cfg config.TokenizationConfig) []string
 }
+
+// SelectPlugin picks the first plugin that matches the provided path.
+func SelectPlugin(plugins []LanguagePlugin, path string) (LanguagePlugin, bool) {
+	for _, p := range plugins {
+		if p.Match(path) {
+			return p, true
+		}
+	}
+	return nil, false
+}

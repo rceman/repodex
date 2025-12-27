@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/memkit/repodex/internal/config"
+	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/ts"
 	"github.com/memkit/repodex/internal/scan"
 	"github.com/memkit/repodex/internal/textutil"
@@ -30,9 +31,9 @@ func TestBuildNormalizesCRLFLineNumbers(t *testing.T) {
 		Size:    int64(len(raw)),
 		Hash64:  0,
 	}}
-	plugin := ts.TSPlugin{}
+	plugins := []lang.LanguagePlugin{ts.TSPlugin{}}
 
-	fileEntries, chunkEntries, _, err := Build(files, plugin, cfg)
+	fileEntries, chunkEntries, _, err := Build(files, plugins, cfg)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}

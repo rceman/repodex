@@ -17,13 +17,12 @@ func (p TSPlugin) ID() string {
 
 func (p TSPlugin) Match(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	if ext != ".ts" && ext != ".tsx" {
+	switch ext {
+	case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs":
+		return true
+	default:
 		return false
 	}
-	if strings.HasSuffix(strings.ToLower(path), ".d.ts") {
-		return false
-	}
-	return true
 }
 
 func (p TSPlugin) ChunkFile(path string, content []byte, cfg config.ChunkingConfig, limits config.LimitsConfig) ([]lang.ChunkDraft, error) {

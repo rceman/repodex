@@ -1,6 +1,7 @@
 package index
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -12,7 +13,7 @@ import (
 )
 
 // Build constructs in-memory index structures.
-func Build(files []scan.ScannedFile, plugin lang.LanguagePlugin, cfg config.Config) ([]FileEntry, []ChunkEntry, map[string][]uint32, error) {
+func Build(files []scan.ScannedFile, plugins []lang.LanguagePlugin, cfg config.Config) ([]FileEntry, []ChunkEntry, map[string][]uint32, error) {
 	var fileEntries []FileEntry
 	var chunkEntries []ChunkEntry
 	postings := make(map[string][]uint32)
@@ -28,6 +29,10 @@ func Build(files []scan.ScannedFile, plugin lang.LanguagePlugin, cfg config.Conf
 
 	for _, f := range sortedFiles {
 		path := filepath.ToSlash(f.Path)
+		plugin, ok := lang.SelectPlugin(plugins, path)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("no plugin matches %s", path)
+		}
 		fileEntry := FileEntry{
 			FileID: nextFileID,
 			Path:   path,

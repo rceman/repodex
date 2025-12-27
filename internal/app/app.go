@@ -253,7 +253,11 @@ func precomputedFromCache(entry cachex.CacheEntry) (index.PrecomputedFile, error
 	}, nil
 }
 
-func buildCacheEntry(ref scan.FileRef, plugin lang.LanguagePlugin, cfg config.Config, tokenCfg config.TokenizationConfig) (index.PrecomputedFile, cachex.CacheEntry, error) {
+func buildCacheEntry(ref scan.FileRef, plugins []lang.LanguagePlugin, cfg config.Config, tokenCfg config.TokenizationConfig) (index.PrecomputedFile, cachex.CacheEntry, error) {
+	plugin, ok := lang.SelectPlugin(plugins, ref.RelPath)
+	if !ok {
+		return index.PrecomputedFile{}, cachex.CacheEntry{}, fmt.Errorf("no plugin matches %s", ref.RelPath)
+	}
 	content, err := os.ReadFile(ref.AbsPath)
 	if err != nil {
 		return index.PrecomputedFile{}, cachex.CacheEntry{}, err
@@ -368,9 +372,9 @@ func runIndexSync(root string) error {
 		return err
 	}
 
-	plugin, err := factory.FromProjectType(cfg.ProjectType)
-	if err != nil {
-		return err
+	plugins := factory.PluginsForProfiles(profiles)
+	if len(plugins) == 0 {
+		return fmt.Errorf("no language plugins available for profiles: %v", profiles)
 	}
 
 	changedSet := make(map[string]struct{})
@@ -427,7 +431,7 @@ func runIndexSync(root string) error {
 			}
 		}
 
-		file, cacheEntry, err := buildCacheEntry(ref, plugin, cfg, rules.TokenConfig)
+		file, cacheEntry, err := buildCacheEntry(ref, plugins, cfg, rules.TokenConfig)
 		if err != nil {
 			return err
 		}

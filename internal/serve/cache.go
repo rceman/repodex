@@ -5,8 +5,6 @@ import (
 
 	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/index"
-	"github.com/memkit/repodex/internal/lang"
-	"github.com/memkit/repodex/internal/lang/factory"
 	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/store"
 )
@@ -17,7 +15,6 @@ type IndexCache struct {
 	loaded   bool
 	cfg      config.Config
 	cfgBytes []byte
-	plugin   lang.LanguagePlugin
 	chunks   []index.ChunkEntry
 	chunkMap map[uint32]index.ChunkEntry
 	terms    map[string]index.TermInfo
@@ -45,10 +42,6 @@ func (c *IndexCache) Load(root string) error {
 		return err
 	}
 	cfg = profile.ApplyRules(cfg, rules)
-	plugin, err := factory.FromProjectType(cfg.ProjectType)
-	if err != nil {
-		return err
-	}
 	chunks, err := index.LoadChunkEntries(store.ChunksPath(root))
 	if err != nil {
 		return err
@@ -68,7 +61,6 @@ func (c *IndexCache) Load(root string) error {
 
 	c.cfg = cfg
 	c.cfgBytes = cfgBytes
-	c.plugin = plugin
 	c.chunks = chunks
 	c.chunkMap = chunkMap
 	c.terms = terms
@@ -84,7 +76,6 @@ func (c *IndexCache) Invalidate() {
 	c.loaded = false
 	c.cfg = config.Config{}
 	c.cfgBytes = nil
-	c.plugin = nil
 	c.chunks = nil
 	c.chunkMap = nil
 	c.terms = nil
@@ -92,7 +83,7 @@ func (c *IndexCache) Invalidate() {
 }
 
 // Get returns cached index components.
-func (c *IndexCache) Get() (config.Config, []byte, lang.LanguagePlugin, []index.ChunkEntry, map[uint32]index.ChunkEntry, map[string]index.TermInfo, []uint32) {
+func (c *IndexCache) Get() (config.Config, []byte, []index.ChunkEntry, map[uint32]index.ChunkEntry, map[string]index.TermInfo, []uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -112,5 +103,5 @@ func (c *IndexCache) Get() (config.Config, []byte, lang.LanguagePlugin, []index.
 	postingsCopy := make([]uint32, len(c.postings))
 	copy(postingsCopy, c.postings)
 
-	return cfgCopy, cfgBytesCopy, c.plugin, chunksCopy, chunkMapCopy, termsCopy, postingsCopy
+	return cfgCopy, cfgBytesCopy, chunksCopy, chunkMapCopy, termsCopy, postingsCopy
 }

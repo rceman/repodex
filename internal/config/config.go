@@ -9,11 +9,10 @@ import (
 
 // Config holds the root configuration for Repodex.
 type Config struct {
-	ProjectType string
-	Scan        ScanConfig
-	Chunk       ChunkingConfig
-	Token       TokenizationConfig
-	Limits      LimitsConfig
+	Scan   ScanConfig
+	Chunk  ChunkingConfig
+	Token  TokenizationConfig
+	Limits LimitsConfig
 }
 
 // ChunkingConfig configures how files are chunked.
@@ -48,8 +47,6 @@ type LimitsConfig struct {
 
 const IndexVersion = 1
 
-const DefaultProjectType = "ts"
-
 // UserConfig holds user overrides stored on disk.
 type UserConfig struct {
 	Profiles []string             `json:"profiles"`
@@ -78,7 +75,6 @@ type UserLimitsOverrides struct {
 // DefaultRuntimeConfig returns a Config populated with defaults.
 func DefaultRuntimeConfig() Config {
 	return Config{
-		ProjectType: DefaultProjectType,
 		Scan: ScanConfig{
 			MaxTextFileSizeBytes: 1024 * 1024,
 		},
