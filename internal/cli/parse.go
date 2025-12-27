@@ -20,6 +20,7 @@ type Command struct {
 	Score      bool
 	NoFormat   bool
 	Explain    bool
+	Color      string
 }
 
 // Parse converts argv into a Command description.
@@ -60,7 +61,7 @@ func Parse(args []string) (Command, error) {
 		}
 		return Command{Action: "sync"}, nil
 	case "search":
-		c := Command{Action: "search"}
+		c := Command{Action: "search", Color: "auto"}
 		i := 1
 		for i < len(args) {
 			switch args[i] {
@@ -95,7 +96,31 @@ func Parse(args []string) (Command, error) {
 			case "--explain":
 				c.Explain = true
 				i++
+			case "--no-color":
+				c.Color = "never"
+				i++
+			case "--color":
+				if i+1 >= len(args) {
+					return Command{}, fmt.Errorf("missing value for --color")
+				}
+				c.Color = strings.ToLower(args[i+1])
+				switch c.Color {
+				case "auto", "always", "never":
+				default:
+					return Command{}, fmt.Errorf("invalid color mode %s (expected auto|always|never)", args[i+1])
+				}
+				i += 2
 			default:
+				if strings.HasPrefix(args[i], "--color=") {
+					c.Color = strings.ToLower(strings.TrimPrefix(args[i], "--color="))
+					switch c.Color {
+					case "auto", "always", "never":
+					default:
+						return Command{}, fmt.Errorf("invalid color mode %s (expected auto|always|never)", strings.TrimPrefix(args[i], "--color="))
+					}
+					i++
+					continue
+				}
 				return Command{}, fmt.Errorf("unknown flag %s", args[i])
 			}
 		}

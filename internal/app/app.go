@@ -91,7 +91,7 @@ func Run(args []string) int {
 		}
 		return 0
 	case "search":
-		if err := runSearch(repoRoot, cmd.Q, cmd.TopK, cmd.JSON, cmd.Score, cmd.NoFormat, cmd.Explain); err != nil {
+		if err := runSearch(repoRoot, cmd.Q, cmd.TopK, cmd.JSON, cmd.Score, cmd.NoFormat, cmd.Explain, cmd.Color); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
@@ -698,7 +698,7 @@ func runServeStdio(root string) error {
 	return serve.ServeStdio(root, statusFn, syncFn)
 }
 
-func runSearch(root string, q string, topK int, jsonOut bool, showScore bool, noFormat bool, explain bool) error {
+func runSearch(root string, q string, topK int, jsonOut bool, showScore bool, noFormat bool, explain bool, color string) error {
 	if q == "" {
 		return fmt.Errorf("query cannot be empty")
 	}
@@ -716,11 +716,30 @@ func runSearch(root string, q string, topK int, jsonOut bool, showScore bool, no
 	if showScore {
 		search.RoundScores(results)
 	}
+	colorMode, err := format.ParseColorMode(color)
+	if err != nil {
+		return err
+	}
+	noColor := os.Getenv("NO_COLOR") != ""
+	termDumb := strings.EqualFold(os.Getenv("TERM"), "dumb")
+	colorPolicy := format.ResolveColorPolicy(colorMode, noFormat, jsonOut, isTerminal(os.Stdout), noColor, termDumb)
 	return format.WriteSearchCompact(os.Stdout, results, format.SearchOptions{
-		NoFormat:  noFormat,
-		WithScore: showScore,
-		Explain:   explain,
+		NoFormat:    noFormat,
+		WithScore:   showScore,
+		Explain:     explain,
+		ColorPolicy: colorPolicy,
 	})
+}
+
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func runFetch(root string, ids []uint32, maxLines int) error {

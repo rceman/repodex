@@ -2,6 +2,7 @@ package format
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/memkit/repodex/internal/search"
@@ -123,10 +124,10 @@ func TestWriteSearchCompactOutput(t *testing.T) {
 
 	want := "" +
 		"-b.go\n" +
-		"[120] func runSearch() error {\n" +
-		"[  7] -dash\n" +
+		" [120] func runSearch() error {\n" +
+		" [  7] -dash\n" +
 		"-a.go\n" +
-		"[ 42] alpha\n"
+		" [ 42] alpha\n"
 
 	got := buf.String()
 	if got != want {
@@ -151,10 +152,63 @@ func TestWriteSearchCompactExplainNoFormat(t *testing.T) {
 
 	want := "" +
 		"-file.go\n" +
-		"[10] \\@line  [why: alpha,beta]\n"
+		" [10] \\@line  [why: alpha,beta]\n"
 
 	got := buf.String()
 	if got != want {
 		t.Fatalf("unexpected output:\n%s", got)
+	}
+}
+
+func TestWriteSearchCompactNoAnsiWhenDisabled(t *testing.T) {
+	results := []search.Result{
+		{
+			Path:      "file.go",
+			StartLine: 3,
+			Snippet:   "  func run() {}",
+			Why:       []string{"run"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSearchCompact(&buf, results, SearchOptions{}); err != nil {
+		t.Fatalf("format error: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "\x1b[") {
+		t.Fatalf("unexpected ansi output")
+	}
+}
+
+func TestWriteSearchCompactAnsiOutput(t *testing.T) {
+	results := []search.Result{
+		{
+			Path:      "file.go",
+			StartLine: 3,
+			Snippet:   "  func run() {}",
+			Why:       []string{"run"},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSearchCompact(&buf, results, SearchOptions{
+		ColorPolicy: ColorPolicy{Enabled: true},
+		Explain:     true,
+	}); err != nil {
+		t.Fatalf("format error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, ansiCyan) {
+		t.Fatalf("expected path color")
+	}
+	if !strings.Contains(out, ansiDim) {
+		t.Fatalf("expected dim line token or explain")
+	}
+	if !strings.Contains(out, ansiGreen) {
+		t.Fatalf("expected definition color")
+	}
+	if !strings.Contains(out, ansiUnderline) {
+		t.Fatalf("expected term highlight")
 	}
 }

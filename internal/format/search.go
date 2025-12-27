@@ -13,9 +13,11 @@ import (
 
 // SearchOptions controls search output formatting.
 type SearchOptions struct {
-	NoFormat  bool
-	WithScore bool
-	Explain   bool
+	NoFormat    bool
+	WithScore   bool
+	Explain     bool
+	ColorPolicy ColorPolicy
+	QueryTerms  []string
 }
 
 type group struct {
@@ -143,10 +145,20 @@ func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions)
 
 	writer := bufio.NewWriter(w)
 	lastPath := ""
+	colorEnabled := opt.ColorPolicy.Enabled && !opt.NoFormat
 
 	for _, hit := range results {
+		isTest := strings.HasSuffix(hit.Path, "_test.go")
 		if hit.Path != lastPath {
-			if _, err := fmt.Fprintf(writer, "-%s\n", hit.Path); err != nil {
+			pathLine := "-" + hit.Path
+			if colorEnabled {
+				pathPrefix := ansiCyan + ansiBold
+				if isTest {
+					pathPrefix = ansiDim + ansiCyan
+				}
+				pathLine = ansiWrap(true, pathPrefix, pathLine, ansiReset)
+			}
+			if _, err := fmt.Fprintf(writer, "%s\n", pathLine); err != nil {
 				return err
 			}
 			lastPath = hit.Path
@@ -156,15 +168,33 @@ func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions)
 		if line == 0 {
 			line = hit.StartLine
 		}
+		lineToken := fmt.Sprintf("[%*d]", width, line)
+		if colorEnabled {
+			lineToken = ansiWrap(true, ansiDim, lineToken, ansiReset)
+		}
+
 		codeLine := hit.Snippet
 		if idx := strings.IndexByte(codeLine, '\n'); idx >= 0 {
 			codeLine = codeLine[:idx]
 		}
 		codeLine = strings.TrimLeft(codeLine, " \t")
+		isDef := strings.HasPrefix(codeLine, "func ")
 		if opt.NoFormat {
 			codeLine = escapeNoFormatLine(codeLine)
 		}
-		if _, err := fmt.Fprintf(writer, " [%*d] %s", width, line, codeLine); err != nil {
+		if colorEnabled {
+			terms := opt.QueryTerms
+			if len(terms) == 0 {
+				terms = hit.Why
+			}
+			codeLine = highlightTerms(codeLine, terms, colorEnabled)
+			if isDef {
+				codeLine = ansiWrap(true, ansiGreen, codeLine, ansiReset)
+			} else if isTest {
+				codeLine = ansiWrap(true, ansiDim, codeLine, ansiReset)
+			}
+		}
+		if _, err := fmt.Fprintf(writer, " %s %s", lineToken, codeLine); err != nil {
 			return err
 		}
 		if opt.Explain && len(hit.Why) > 0 {
@@ -172,7 +202,11 @@ func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions)
 			if !sort.StringsAreSorted(why) {
 				sort.Strings(why)
 			}
-			if _, err := fmt.Fprintf(writer, "  [why: %s]", strings.Join(why, ",")); err != nil {
+			explain := fmt.Sprintf("  [why: %s]", strings.Join(why, ","))
+			if colorEnabled {
+				explain = ansiWrap(true, ansiDim, explain, ansiReset)
+			}
+			if _, err := writer.WriteString(explain); err != nil {
 				return err
 			}
 		}
@@ -193,5 +227,122 @@ func escapeNoFormatLine(line string) string {
 		return "\\" + line
 	default:
 		return line
+	}
+}
+
+type termMatch struct {
+	start int
+	end   int
+}
+
+func highlightTerms(line string, terms []string, enabled bool) string {
+	if !enabled || line == "" || len(terms) == 0 {
+		return line
+	}
+	matches := collectTermMatches(line, terms)
+	if len(matches) == 0 {
+		return line
+	}
+	var b strings.Builder
+	b.Grow(len(line) + len(matches)*len(ansiUnderline)*2)
+	last := 0
+	for _, m := range matches {
+		if m.start < last {
+			continue
+		}
+		b.WriteString(line[last:m.start])
+		b.WriteString(ansiUnderline)
+		b.WriteString(line[m.start:m.end])
+		b.WriteString(ansiUnderlineOff)
+		last = m.end
+	}
+	b.WriteString(line[last:])
+	return b.String()
+}
+
+func collectTermMatches(line string, terms []string) []termMatch {
+	seen := make(map[string]struct{}, len(terms))
+	matches := make([]termMatch, 0, len(terms))
+	for _, term := range terms {
+		term = strings.TrimSpace(term)
+		if term == "" {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		ident := isIdentifierTerm(term)
+		start := 0
+		for {
+			idx := strings.Index(line[start:], term)
+			if idx < 0 {
+				break
+			}
+			idx += start
+			end := idx + len(term)
+			if ident && !isIdentifierBoundary(line, idx, end) {
+				start = end
+				continue
+			}
+			matches = append(matches, termMatch{start: idx, end: end})
+			start = end
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].start != matches[j].start {
+			return matches[i].start < matches[j].start
+		}
+		return matches[i].end > matches[j].end
+	})
+	filtered := matches[:0]
+	lastEnd := -1
+	for _, m := range matches {
+		if m.start < lastEnd {
+			continue
+		}
+		filtered = append(filtered, m)
+		lastEnd = m.end
+	}
+	return filtered
+}
+
+func isIdentifierTerm(term string) bool {
+	if term == "" {
+		return false
+	}
+	for i := 0; i < len(term); i++ {
+		if !isIdentifierChar(term[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentifierBoundary(line string, start, end int) bool {
+	if start > 0 && isIdentifierChar(line[start-1]) {
+		return false
+	}
+	if end < len(line) && isIdentifierChar(line[end]) {
+		return false
+	}
+	return true
+}
+
+func isIdentifierChar(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '_':
+		return true
+	default:
+		return false
 	}
 }
