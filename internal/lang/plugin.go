@@ -1,6 +1,11 @@
 package lang
 
-import "github.com/memkit/repodex/internal/config"
+import (
+	"path/filepath"
+	"strings"
+
+	"github.com/memkit/repodex/internal/config"
+)
 
 // ChunkDraft represents a chunk produced during language-specific chunking.
 type ChunkDraft struct {
@@ -18,7 +23,15 @@ type LanguagePlugin interface {
 }
 
 // SelectPlugin picks the first plugin that matches the provided path.
-func SelectPlugin(plugins []LanguagePlugin, path string) (LanguagePlugin, bool) {
+func SelectPlugin(plugins []LanguagePlugin, extMap map[string]LanguagePlugin, path string) (LanguagePlugin, bool) {
+	if extMap != nil {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != "" {
+			if p, ok := extMap[ext]; ok {
+				return p, true
+			}
+		}
+	}
 	for _, p := range plugins {
 		if p.Match(path) {
 			return p, true

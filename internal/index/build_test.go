@@ -33,7 +33,7 @@ func TestBuildNormalizesCRLFLineNumbers(t *testing.T) {
 	}}
 	plugins := []lang.LanguagePlugin{ts.TSPlugin{}}
 
-	fileEntries, chunkEntries, _, err := Build(files, plugins, cfg)
+	fileEntries, chunkEntries, _, err := Build(files, plugins, nil, cfg)
 	if err != nil {
 		t.Fatalf("build error: %v", err)
 	}

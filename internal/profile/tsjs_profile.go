@@ -59,7 +59,22 @@ func (tsjsProfile) Detect(ctx DetectContext) (bool, error) {
 
 func (tsjsProfile) Rules() Rules {
 	return Rules{
-		ScanIgnore: []string{"**/*.map"},
+		ScanIgnore: []string{
+			"**/*.map",
+			"**/*.min.js",
+			"**/*.min.mjs",
+			"**/*.min.cjs",
+			"**/*.min.css",
+			"**/*.min.svg",
+			"**/*.bundle.js",
+			"**/*.bundle.mjs",
+			"**/*.bundle.cjs",
+			"**/*.bundle.css",
+			"**/*.chunk.js",
+			"**/*.chunk.mjs",
+			"**/*.chunk.cjs",
+			"**/*.chunk.css",
+		},
 		IncludeExt: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
 		Tokenize: TokenizeRules{
 			PathStripSuffixes: []string{".d.ts.map", ".d.tsx", ".d.ts"},

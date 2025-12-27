@@ -13,7 +13,7 @@ import (
 )
 
 // Build constructs in-memory index structures.
-func Build(files []scan.ScannedFile, plugins []lang.LanguagePlugin, cfg config.Config) ([]FileEntry, []ChunkEntry, map[string][]uint32, error) {
+func Build(files []scan.ScannedFile, plugins []lang.LanguagePlugin, extMap map[string]lang.LanguagePlugin, cfg config.Config) ([]FileEntry, []ChunkEntry, map[string][]uint32, error) {
 	var fileEntries []FileEntry
 	var chunkEntries []ChunkEntry
 	postings := make(map[string][]uint32)
@@ -29,7 +29,7 @@ func Build(files []scan.ScannedFile, plugins []lang.LanguagePlugin, cfg config.C
 
 	for _, f := range sortedFiles {
 		path := filepath.ToSlash(f.Path)
-		plugin, ok := lang.SelectPlugin(plugins, path)
+		plugin, ok := lang.SelectPlugin(plugins, extMap, path)
 		if !ok {
 			return nil, nil, nil, fmt.Errorf("no plugin matches %s", path)
 		}

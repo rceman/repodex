@@ -75,11 +75,11 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 	})
 
 	plugins := []lang.LanguagePlugin{ts.TSPlugin{}}
-	files1, chunks1, postings1, err := index.Build(firstScan, plugins, cfg)
+	files1, chunks1, postings1, err := index.Build(firstScan, plugins, nil, cfg)
 	if err != nil {
 		t.Fatalf("build from first scan: %v", err)
 	}
-	files2, chunks2, postings2, err := index.Build(shuffled, plugins, cfg)
+	files2, chunks2, postings2, err := index.Build(shuffled, plugins, nil, cfg)
 	if err != nil {
 		t.Fatalf("build from shuffled scan: %v", err)
 	}

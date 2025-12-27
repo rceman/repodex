@@ -253,8 +253,8 @@ func precomputedFromCache(entry cachex.CacheEntry) (index.PrecomputedFile, error
 	}, nil
 }
 
-func buildCacheEntry(ref scan.FileRef, plugins []lang.LanguagePlugin, cfg config.Config, tokenCfg config.TokenizationConfig) (index.PrecomputedFile, cachex.CacheEntry, error) {
-	plugin, ok := lang.SelectPlugin(plugins, ref.RelPath)
+func buildCacheEntry(ref scan.FileRef, plugins []lang.LanguagePlugin, extMap map[string]lang.LanguagePlugin, cfg config.Config, tokenCfg config.TokenizationConfig) (index.PrecomputedFile, cachex.CacheEntry, error) {
+	plugin, ok := lang.SelectPlugin(plugins, extMap, ref.RelPath)
 	if !ok {
 		return index.PrecomputedFile{}, cachex.CacheEntry{}, fmt.Errorf("no plugin matches %s", ref.RelPath)
 	}
@@ -376,6 +376,7 @@ func runIndexSync(root string) error {
 	if len(plugins) == 0 {
 		return fmt.Errorf("no language plugins available for profiles: %v", profiles)
 	}
+	extMap := factory.ExtensionMapForProfiles(profiles)
 
 	changedSet := make(map[string]struct{})
 	fullRebuild := true
@@ -431,7 +432,7 @@ func runIndexSync(root string) error {
 			}
 		}
 
-		file, cacheEntry, err := buildCacheEntry(ref, plugins, cfg, rules.TokenConfig)
+		file, cacheEntry, err := buildCacheEntry(ref, plugins, extMap, cfg, rules.TokenConfig)
 		if err != nil {
 			return err
 		}

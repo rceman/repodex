@@ -494,7 +494,7 @@ func buildTestIndex(t *testing.T, root string) {
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	fileEntries, chunkEntries, postings, err := index.Build(files, plugins, cfg)
+	fileEntries, chunkEntries, postings, err := index.Build(files, plugins, nil, cfg)
 	if err != nil {
 		t.Fatalf("build index: %v", err)
 	}

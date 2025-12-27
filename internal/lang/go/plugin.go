@@ -17,7 +17,7 @@ func (p GoPlugin) ID() string {
 
 func (p GoPlugin) Match(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go", ".mod", ".sum", ".work":
+	case ".go", ".mod", ".work":
 		return true
 	default:
 		return false
