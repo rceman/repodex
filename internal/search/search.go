@@ -21,18 +21,23 @@ import (
 type Options struct {
 	TopK       int
 	MaxPerFile int
+	Scope      bool
 }
 
 // Result represents a ranked chunk.
 type Result struct {
-	ChunkID   uint32   `json:"chunk_id"`
-	Path      string   `json:"path"`
-	StartLine uint32   `json:"start_line"`
-	EndLine   uint32   `json:"end_line"`
-	MatchLine uint32   `json:"match_line,omitempty"`
-	Score     float64  `json:"score"`
-	Snippet   string   `json:"snippet"`
-	Why       []string `json:"why"`
+	ChunkID        uint32   `json:"chunk_id"`
+	Path           string   `json:"path"`
+	StartLine      uint32   `json:"start_line"`
+	EndLine        uint32   `json:"end_line"`
+	MatchLine      uint32   `json:"match_line,omitempty"`
+	ScopeStartLine uint32   `json:"scope_start_line,omitempty"`
+	ScopeEndLine   uint32   `json:"scope_end_line,omitempty"`
+	ScopeKind      string   `json:"scope_kind,omitempty"`
+	ScopeName      string   `json:"scope_name,omitempty"`
+	Score          float64  `json:"score"`
+	Snippet        string   `json:"snippet"`
+	Why            []string `json:"why"`
 }
 
 // Search executes a keyword search over the serialized index.
@@ -75,7 +80,7 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 		return nil, err
 	}
 
-	return SearchWithIndex(root, cfg, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile})
+	return SearchWithIndex(root, cfg, chunks, nil, terms, postings, q, Options{TopK: topK, MaxPerFile: maxPerFile, Scope: opts.Scope})
 }
 
 // SearchWithIndex executes a keyword search using provided index data.
@@ -182,6 +187,9 @@ func SearchWithIndex(root string, cfg config.Config, chunks []index.ChunkEntry, 
 
 	if root != "" {
 		enrichSnippets(root, tok, filtered, uniqueTerms, cfg.Limits.MaxSnippetBytes)
+	}
+	if root != "" && opts.Scope {
+		enrichGoScopes(root, filtered)
 	}
 
 	return filtered, nil

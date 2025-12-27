@@ -16,6 +16,7 @@ type SearchOptions struct {
 	NoFormat    bool
 	WithScore   bool
 	Explain     bool
+	Scope       bool
 	ColorPolicy ColorPolicy
 	QueryTerms  []string
 }
@@ -128,19 +129,21 @@ func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions)
 		return nil
 	}
 
-	maxLine := uint32(0)
-	for _, hit := range results {
-		line := hit.MatchLine
-		if line == 0 {
-			line = hit.StartLine
-		}
-		if line > maxLine {
-			maxLine = line
-		}
-	}
 	width := 1
-	if maxLine > 0 {
-		width = len(strconv.FormatUint(uint64(maxLine), 10))
+	if !opt.Scope {
+		maxLine := uint32(0)
+		for _, hit := range results {
+			line := hit.MatchLine
+			if line == 0 {
+				line = hit.StartLine
+			}
+			if line > maxLine {
+				maxLine = line
+			}
+		}
+		if maxLine > 0 {
+			width = len(strconv.FormatUint(uint64(maxLine), 10))
+		}
 	}
 
 	writer := bufio.NewWriter(w)
@@ -168,17 +171,16 @@ func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions)
 		if line == 0 {
 			line = hit.StartLine
 		}
-		lineToken := fmt.Sprintf("[%*d]", width, line)
-		if colorEnabled {
-			lineToken = ansiWrap(true, ansiDim, lineToken, ansiReset)
-		}
-
 		codeLine := hit.Snippet
 		if idx := strings.IndexByte(codeLine, '\n'); idx >= 0 {
 			codeLine = codeLine[:idx]
 		}
 		codeLine = strings.TrimLeft(codeLine, " \t")
 		isDef := strings.HasPrefix(codeLine, "func ")
+		isScopeDef := opt.Scope && hit.ScopeStartLine > 0 && line == hit.ScopeStartLine && isDef
+		if opt.Scope {
+			isDef = isScopeDef
+		}
 		if opt.NoFormat {
 			codeLine = escapeNoFormatLine(codeLine)
 		}
@@ -194,8 +196,31 @@ func WriteSearchCompact(w io.Writer, results []search.Result, opt SearchOptions)
 				codeLine = ansiWrap(true, ansiDim, codeLine, ansiReset)
 			}
 		}
-		if _, err := fmt.Fprintf(writer, " %s %s", lineToken, codeLine); err != nil {
-			return err
+		if opt.Scope {
+			token := ""
+			if hit.ScopeStartLine > 0 && hit.ScopeEndLine > 0 {
+				if isScopeDef {
+					token = fmt.Sprintf("%d-%d:", hit.ScopeStartLine, hit.ScopeEndLine)
+				} else {
+					token = fmt.Sprintf("%d-%d@%d:", hit.ScopeStartLine, hit.ScopeEndLine, line)
+				}
+			} else {
+				token = fmt.Sprintf("%d:", line)
+			}
+			if colorEnabled {
+				token = ansiWrap(true, ansiDim, token, ansiReset)
+			}
+			if _, err := fmt.Fprintf(writer, "%s %s", token, codeLine); err != nil {
+				return err
+			}
+		} else {
+			lineToken := fmt.Sprintf("[%*d]", width, line)
+			if colorEnabled {
+				lineToken = ansiWrap(true, ansiDim, lineToken, ansiReset)
+			}
+			if _, err := fmt.Fprintf(writer, " %s %s", lineToken, codeLine); err != nil {
+				return err
+			}
 		}
 		if opt.Explain && len(hit.Why) > 0 {
 			why := append([]string(nil), hit.Why...)

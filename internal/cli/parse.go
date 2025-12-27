@@ -20,6 +20,7 @@ type Command struct {
 	Score      bool
 	NoFormat   bool
 	Explain    bool
+	Scope      bool
 	Color      string
 }
 
@@ -95,6 +96,9 @@ func Parse(args []string) (Command, error) {
 				i++
 			case "--explain":
 				c.Explain = true
+				i++
+			case "--scope":
+				c.Scope = true
 				i++
 			case "--no-color":
 				c.Color = "never"

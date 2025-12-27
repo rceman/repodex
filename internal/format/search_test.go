@@ -160,6 +160,48 @@ func TestWriteSearchCompactExplainNoFormat(t *testing.T) {
 	}
 }
 
+func TestWriteSearchCompactScopeOutput(t *testing.T) {
+	results := []search.Result{
+		{
+			Path:           "file.go",
+			StartLine:      10,
+			MatchLine:      10,
+			ScopeStartLine: 10,
+			ScopeEndLine:   20,
+			Snippet:        "  func run() {}",
+		},
+		{
+			Path:           "file.go",
+			StartLine:      15,
+			MatchLine:      15,
+			ScopeStartLine: 10,
+			ScopeEndLine:   20,
+			Snippet:        "  run()",
+		},
+		{
+			Path:      "file.go",
+			StartLine: 30,
+			Snippet:   "  outside()",
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteSearchCompact(&buf, results, SearchOptions{Scope: true}); err != nil {
+		t.Fatalf("format error: %v", err)
+	}
+
+	want := "" +
+		"-file.go\n" +
+		"10-20: func run() {}\n" +
+		"10-20@15: run()\n" +
+		"30: outside()\n"
+
+	got := buf.String()
+	if got != want {
+		t.Fatalf("unexpected output:\n%s", got)
+	}
+}
+
 func TestWriteSearchCompactNoAnsiWhenDisabled(t *testing.T) {
 	results := []search.Result{
 		{
