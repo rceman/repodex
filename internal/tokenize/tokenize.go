@@ -113,13 +113,19 @@ func (t Tokenizer) Path(path string) []string {
 	base := filepath.Base(clean)
 	ext := filepath.Ext(base)
 	lowerBase := strings.ToLower(base)
-	for _, suffix := range []string{".d.ts.map", ".d.tsx", ".d.ts"} {
+	for _, suffix := range t.cfg.PathStripSuffixes {
 		if strings.HasSuffix(lowerBase, suffix) && len(base) > len(suffix) {
 			trimmedBase := base[:len(base)-len(suffix)]
 			clean = strings.TrimSuffix(clean, base) + trimmedBase
 			base = trimmedBase
 			ext = filepath.Ext(base)
 			lowerBase = strings.ToLower(base)
+			break
+		}
+	}
+	for _, strip := range t.cfg.PathStripExts {
+		if strings.HasSuffix(lowerBase, strip) && len(base) > len(strip) {
+			ext = strip
 			break
 		}
 	}

@@ -268,11 +268,15 @@ func isIndexableChangedPath(p string) bool {
 	if p == ".repodex" || strings.HasPrefix(p, ".repodex/") {
 		return false
 	}
-	// TypeScript only.
 	if strings.HasSuffix(p, ".d.ts") {
 		return false
 	}
-	return strings.HasSuffix(p, ".ts") || strings.HasSuffix(p, ".tsx")
+	return strings.HasSuffix(p, ".ts") ||
+		strings.HasSuffix(p, ".tsx") ||
+		strings.HasSuffix(p, ".js") ||
+		strings.HasSuffix(p, ".jsx") ||
+		strings.HasSuffix(p, ".mjs") ||
+		strings.HasSuffix(p, ".cjs")
 }
 
 func sortedLimitedPaths(set map[string]struct{}, limit int) []string {

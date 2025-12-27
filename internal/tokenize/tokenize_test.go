@@ -15,6 +15,8 @@ func newTestCfg() config.TokenizationConfig {
 		AllowShortTokens:       []string{"id", "ui"},
 		StopWords:              []string{"const"},
 		TokenizeStringLiterals: true,
+		PathStripSuffixes:      []string{".d.ts.map", ".d.tsx", ".d.ts"},
+		PathStripExts:          []string{".ts", ".tsx"},
 	}
 }
 
