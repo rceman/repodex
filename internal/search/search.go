@@ -91,7 +91,8 @@ func SearchWithIndex(root string, cfg config.Config, chunks []index.ChunkEntry, 
 		maxPerFile = 2
 	}
 
-	tokens := tokenize.New(cfg.Token).Text(q)
+	tok := tokenize.New(cfg.Token)
+	tokens := tok.Text(q)
 	uniqueTerms := make([]string, 0, len(tokens))
 	seen := make(map[string]struct{})
 	for _, tok := range tokens {
@@ -161,6 +162,10 @@ func SearchWithIndex(root string, cfg config.Config, chunks []index.ChunkEntry, 
 		return results[i].Score > results[j].Score
 	})
 
+	if root != "" {
+		rerankTop(root, tok, results, uniqueTerms, maxPerFile, topK)
+	}
+
 	filtered := make([]Result, 0, len(results))
 	perFileCount := make(map[string]int)
 	for _, r := range results {
@@ -175,20 +180,20 @@ func SearchWithIndex(root string, cfg config.Config, chunks []index.ChunkEntry, 
 	}
 
 	if root != "" {
-		enrichSnippets(root, filtered, cfg.Limits.MaxSnippetBytes)
+		enrichSnippets(root, tok, filtered, uniqueTerms, cfg.Limits.MaxSnippetBytes)
 	}
 
 	return filtered, nil
 }
 
-func enrichSnippets(root string, results []Result, maxBytes int) {
+func enrichSnippets(root string, tok tokenize.Tokenizer, results []Result, terms []string, maxBytes int) {
 	if len(results) == 0 {
 		return
 	}
 	lineCache := make(map[string][]string)
 	for i := range results {
 		r := &results[i]
-		if len(r.Why) == 0 {
+		if len(terms) == 0 {
 			continue
 		}
 		lines, ok := lineCache[r.Path]
@@ -206,14 +211,14 @@ func enrichSnippets(root string, results []Result, maxBytes int) {
 		if lines == nil {
 			continue
 		}
-		snippet := extractTermSnippet(lines, int(r.StartLine), int(r.EndLine), r.Why, maxBytes)
+		snippet := extractTermSnippet(lines, int(r.StartLine), int(r.EndLine), terms, maxBytes, tok)
 		if snippet != "" {
 			r.Snippet = snippet
 		}
 	}
 }
 
-func extractTermSnippet(lines []string, start, end int, terms []string, maxBytes int) string {
+func extractTermSnippet(lines []string, start, end int, terms []string, maxBytes int, tok tokenize.Tokenizer) string {
 	if start < 1 {
 		start = 1
 	}
@@ -223,46 +228,230 @@ func extractTermSnippet(lines []string, start, end int, terms []string, maxBytes
 	if start > end {
 		return ""
 	}
-	lowerTerms := make([]string, 0, len(terms))
+
+	termSet := make(map[string]struct{}, len(terms))
 	for _, t := range terms {
-		trimmed := strings.ToLower(strings.TrimSpace(t))
-		if trimmed != "" {
-			lowerTerms = append(lowerTerms, trimmed)
+		trimmed := strings.TrimSpace(t)
+		if trimmed == "" {
+			continue
 		}
+		termSet[trimmed] = struct{}{}
 	}
-	if len(lowerTerms) == 0 {
+	if len(termSet) == 0 {
 		return ""
 	}
 
-	var picked []string
-	for i := start - 1; i < end && len(picked) < 3; i++ {
+	type cand struct {
+		idx int
+		cov int
+	}
+	cands := make([]cand, 0, 8)
+	bestCov := 0
+	bestIdx := -1
+
+	for i := start - 1; i < end; i++ {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
-		lower := strings.ToLower(line)
-		for _, term := range lowerTerms {
-			if strings.Contains(lower, term) {
-				picked = append(picked, line)
-				break
+		ltoks := tok.Text(line)
+		if len(ltoks) == 0 {
+			continue
+		}
+		lineSeen := make(map[string]struct{}, len(termSet))
+		cov := 0
+		for _, w := range ltoks {
+			if _, ok := termSet[w]; !ok {
+				continue
 			}
+			if _, ok := lineSeen[w]; ok {
+				continue
+			}
+			lineSeen[w] = struct{}{}
+			cov++
+		}
+		if cov == 0 {
+			continue
+		}
+		cands = append(cands, cand{idx: i, cov: cov})
+		if cov > bestCov || (cov == bestCov && (bestIdx == -1 || i < bestIdx)) {
+			bestCov = cov
+			bestIdx = i
 		}
 	}
-	if len(picked) == 0 {
+	if len(cands) == 0 {
 		return ""
 	}
-	snippet := strings.Join(picked, "\n")
-	if maxBytes > 0 {
-		b := []byte(snippet)
-		if len(b) > maxBytes {
-			b = b[:maxBytes]
-			for len(b) > 0 && !utf8.Valid(b) {
-				b = b[:len(b)-1]
+
+	selected := make([]int, 0, 3)
+	if bestCov == len(termSet) && bestIdx >= 0 {
+		selected = append(selected, bestIdx)
+	} else {
+		sort.Slice(cands, func(i, j int) bool {
+			if cands[i].cov != cands[j].cov {
+				return cands[i].cov > cands[j].cov
 			}
-			snippet = string(b)
+			return cands[i].idx < cands[j].idx
+		})
+		seen := make(map[int]struct{}, 3)
+		for _, c := range cands {
+			if len(selected) >= 3 {
+				break
+			}
+			if _, ok := seen[c.idx]; ok {
+				continue
+			}
+			seen[c.idx] = struct{}{}
+			selected = append(selected, c.idx)
+		}
+	}
+
+	var b strings.Builder
+	for k, idx := range selected {
+		if k > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(lines[idx])
+	}
+
+	snippet := b.String()
+	if maxBytes > 0 {
+		raw := []byte(snippet)
+		if len(raw) > maxBytes {
+			raw = raw[:maxBytes]
+			for len(raw) > 0 && !utf8.Valid(raw) {
+				raw = raw[:len(raw)-1]
+			}
+			snippet = strings.TrimRight(string(raw), "\n")
 		}
 	}
 	return snippet
+}
+
+type rerankInfo struct {
+	bestLineCoverage int
+	chunkCoverage    int
+	spanLines        int
+	isTest           bool
+}
+
+func rerankTop(root string, tok tokenize.Tokenizer, results []Result, terms []string, maxPerFile, topK int) {
+	if len(results) < 2 || len(terms) == 0 {
+		return
+	}
+	termSet := make(map[string]struct{}, len(terms))
+	for _, t := range terms {
+		trimmed := strings.TrimSpace(t)
+		if trimmed == "" {
+			continue
+		}
+		termSet[trimmed] = struct{}{}
+	}
+	if len(termSet) == 0 {
+		return
+	}
+
+	limit := topK * maxPerFile * 50
+	if limit <= 0 || limit > len(results) {
+		limit = len(results)
+	}
+
+	lineCache := make(map[string][]string)
+	infoByID := make(map[uint32]rerankInfo, limit)
+
+	for i := 0; i < limit; i++ {
+		r := results[i]
+		info := rerankInfo{
+			spanLines: int(r.EndLine - r.StartLine + 1),
+			isTest:    strings.HasSuffix(r.Path, "_test.go"),
+		}
+		lines, ok := lineCache[r.Path]
+		if !ok {
+			abs := filepath.Join(root, filepath.FromSlash(r.Path))
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				lineCache[r.Path] = nil
+				infoByID[r.ChunkID] = info
+				continue
+			}
+			normalized := textutil.NormalizeNewlinesBytes(data)
+			lines = strings.Split(string(normalized), "\n")
+			lineCache[r.Path] = lines
+		}
+		if lines != nil {
+			bestLine, chunkCov := computeChunkMatchStats(lines, int(r.StartLine), int(r.EndLine), termSet, tok)
+			info.bestLineCoverage = bestLine
+			info.chunkCoverage = chunkCov
+		}
+		infoByID[r.ChunkID] = info
+	}
+
+	sort.SliceStable(results[:limit], func(i, j int) bool {
+		ri := infoByID[results[i].ChunkID]
+		rj := infoByID[results[j].ChunkID]
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		if ri.bestLineCoverage != rj.bestLineCoverage {
+			return ri.bestLineCoverage > rj.bestLineCoverage
+		}
+		if ri.chunkCoverage != rj.chunkCoverage {
+			return ri.chunkCoverage > rj.chunkCoverage
+		}
+		if ri.isTest != rj.isTest {
+			return !ri.isTest
+		}
+		if ri.spanLines != rj.spanLines {
+			return ri.spanLines < rj.spanLines
+		}
+		return results[i].ChunkID < results[j].ChunkID
+	})
+}
+
+func computeChunkMatchStats(lines []string, start, end int, termSet map[string]struct{}, tok tokenize.Tokenizer) (int, int) {
+	if start < 1 {
+		start = 1
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > end || len(termSet) == 0 {
+		return 0, 0
+	}
+
+	bestLine := 0
+	chunkSeen := make(map[string]struct{}, len(termSet))
+
+	for i := start - 1; i < end; i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		ltoks := tok.Text(line)
+		if len(ltoks) == 0 {
+			continue
+		}
+		lineSeen := make(map[string]struct{}, len(termSet))
+		lineCov := 0
+		for _, w := range ltoks {
+			if _, ok := termSet[w]; !ok {
+				continue
+			}
+			if _, ok := lineSeen[w]; ok {
+				continue
+			}
+			lineSeen[w] = struct{}{}
+			lineCov++
+			if _, ok := chunkSeen[w]; !ok {
+				chunkSeen[w] = struct{}{}
+			}
+		}
+		if lineCov > bestLine {
+			bestLine = lineCov
+		}
+	}
+
+	return bestLine, len(chunkSeen)
 }
 
 // RoundScores rounds result scores to two decimal places for display.

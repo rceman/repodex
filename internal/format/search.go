@@ -75,7 +75,12 @@ func WriteSearchGrouped(w io.Writer, results []search.Result, opt SearchOptions)
 }
 
 func writeHit(w *bufio.Writer, hit search.Result, opt SearchOptions) error {
-	byteCount := len([]byte(hit.Snippet))
+	lines := strings.Split(hit.Snippet, "\n")
+	trimmed := make([]string, len(lines))
+	for i, line := range lines {
+		trimmed[i] = strings.TrimLeft(line, " \t")
+	}
+	byteCount := len([]byte(strings.Join(trimmed, "\n")))
 	prefix := " "
 	if opt.NoFormat {
 		prefix = ""
@@ -90,8 +95,7 @@ func writeHit(w *bufio.Writer, hit search.Result, opt SearchOptions) error {
 		}
 	}
 
-	lines := strings.Split(hit.Snippet, "\n")
-	for _, line := range lines {
+	for _, line := range trimmed {
 		outLine := line
 		if opt.NoFormat {
 			if len(outLine) > 0 {

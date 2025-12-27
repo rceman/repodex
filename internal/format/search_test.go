@@ -22,7 +22,7 @@ func TestWriteSearchGroupedOrderingAndBytes(t *testing.T) {
 			Path:      "b.go",
 			StartLine: 3,
 			EndLine:   4,
-			Snippet:   "-dash",
+			Snippet:   "   -dash",
 		},
 		{
 			ChunkID:   3,
@@ -71,7 +71,7 @@ func TestWriteSearchGroupedNoFormatEscapes(t *testing.T) {
 			Path:      "file.go",
 			StartLine: 10,
 			EndLine:   12,
-			Snippet:   "@line\n-normal\n>header",
+			Snippet:   "  @line\n\t-normal\n >header",
 			Why:       []string{"why"},
 		},
 	}
