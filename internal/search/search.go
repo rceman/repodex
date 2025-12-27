@@ -212,11 +212,67 @@ func enrichSnippets(root string, tok tokenize.Tokenizer, results []Result, terms
 		if lines == nil {
 			continue
 		}
+		if r.MatchLine == 0 {
+			r.MatchLine = findBestMatchLine(lines, int(r.StartLine), int(r.EndLine), terms, tok)
+		}
 		snippet := extractTermSnippet(lines, int(r.StartLine), int(r.EndLine), terms, maxBytes, tok)
 		if snippet != "" {
 			r.Snippet = snippet
 		}
 	}
+}
+
+func findBestMatchLine(lines []string, start, end int, terms []string, tok tokenize.Tokenizer) uint32 {
+	if start < 1 {
+		start = 1
+	}
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start > end {
+		return 0
+	}
+	termSet := make(map[string]struct{}, len(terms))
+	for _, t := range terms {
+		trimmed := strings.TrimSpace(t)
+		if trimmed == "" {
+			continue
+		}
+		termSet[trimmed] = struct{}{}
+	}
+	if len(termSet) == 0 {
+		return 0
+	}
+
+	bestLine := 0
+	bestCoverage := 0
+	for i := start - 1; i < end; i++ {
+		line := lines[i]
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		ltoks := tok.Text(line)
+		if len(ltoks) == 0 {
+			continue
+		}
+		lineSeen := make(map[string]struct{}, len(termSet))
+		lineCov := 0
+		for _, w := range ltoks {
+			if _, ok := termSet[w]; !ok {
+				continue
+			}
+			if _, ok := lineSeen[w]; ok {
+				continue
+			}
+			lineSeen[w] = struct{}{}
+			lineCov++
+		}
+		if lineCov > bestCoverage {
+			bestCoverage = lineCov
+			bestLine = i + 1
+		}
+	}
+	return uint32(bestLine)
 }
 
 func extractTermSnippet(lines []string, start, end int, terms []string, maxBytes int, tok tokenize.Tokenizer) string {
