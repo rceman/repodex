@@ -21,7 +21,7 @@ func BuildEffectiveRules(root string, profiles []string, cfg config.Config) (Eff
 
 	scanIgnore, err := loadScanIgnore(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return EffectiveRules{}, fmt.Errorf("load .repodexignore: %w", err)
+		return EffectiveRules{}, fmt.Errorf("load .repodex.ignore: %w", err)
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		scanIgnore = buildDefaultIgnore(resolved)
@@ -37,7 +37,7 @@ func BuildEffectiveRules(root string, profiles []string, cfg config.Config) (Eff
 		MaxTextFileSizeBytes: cfg.Scan.MaxTextFileSizeBytes,
 	}
 
-	rulesHash, err := computeRulesHash(profiles, scanIgnore, includeExt, scanSettings, tokenRules)
+	rulesHash, err := computeRulesHash(profiles, scanIgnore, includeExt, scanSettings, tokenRules, tokenCfg)
 	if err != nil {
 		return EffectiveRules{}, err
 	}
@@ -51,6 +51,12 @@ func BuildEffectiveRules(root string, profiles []string, cfg config.Config) (Eff
 		ScanSettings: scanSettings,
 		RulesHash:    rulesHash,
 	}, nil
+}
+
+// ApplyRules updates config based on effective rules.
+func ApplyRules(cfg config.Config, rules EffectiveRules) config.Config {
+	cfg.Token = rules.TokenConfig
+	return cfg
 }
 
 func mergeTokenRules(base config.TokenizationConfig, profiles []Profile) TokenizeRules {
@@ -149,7 +155,7 @@ func (t TokenizeRules) ToConfig(base config.TokenizationConfig) config.Tokenizat
 }
 
 func loadScanIgnore(root string) ([]string, error) {
-	path := filepath.Join(root, ".repodexignore")
+	path := filepath.Join(root, ".repodex.ignore")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -166,7 +172,7 @@ func loadScanIgnore(root string) ([]string, error) {
 	return patterns, nil
 }
 
-func computeRulesHash(profiles []string, scanIgnore []string, includeExt []string, scanSettings ScanSettings, tokenize TokenizeRules) (uint64, error) {
+func computeRulesHash(profiles []string, scanIgnore []string, includeExt []string, scanSettings ScanSettings, tokenize TokenizeRules, tokenCfg config.TokenizationConfig) (uint64, error) {
 	state := struct {
 		SchemaVersion int
 		Profiles      []string
@@ -174,6 +180,7 @@ func computeRulesHash(profiles []string, scanIgnore []string, includeExt []strin
 		IncludeExt    []string
 		ScanSettings  ScanSettings
 		Tokenize      TokenizeRules
+		TokenConfig   config.TokenizationConfig
 	}{
 		SchemaVersion: SchemaVersion,
 		Profiles:      append([]string(nil), profiles...),
@@ -181,6 +188,7 @@ func computeRulesHash(profiles []string, scanIgnore []string, includeExt []strin
 		IncludeExt:    append([]string(nil), includeExt...),
 		ScanSettings:  scanSettings,
 		Tokenize:      tokenize,
+		TokenConfig:   tokenCfg,
 	}
 
 	bytes, err := json.Marshal(state)

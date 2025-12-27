@@ -52,10 +52,27 @@ const DefaultProjectType = "ts"
 
 // UserConfig holds user overrides stored on disk.
 type UserConfig struct {
-	Profiles []string        `json:"profiles"`
-	Scan     *ScanConfig     `json:"scan,omitempty"`
-	Chunk    *ChunkingConfig `json:"chunk,omitempty"`
-	Limits   *LimitsConfig   `json:"limits,omitempty"`
+	Profiles []string             `json:"profiles"`
+	Scan     *UserScanOverrides   `json:"scan,omitempty"`
+	Chunk    *UserChunkOverrides  `json:"chunk,omitempty"`
+	Limits   *UserLimitsOverrides `json:"limits,omitempty"`
+}
+
+// UserChunkOverrides describes chunking overrides for user config.
+type UserChunkOverrides struct {
+	MaxLines      *int `json:"maxLines,omitempty"`
+	OverlapLines  *int `json:"overlapLines,omitempty"`
+	MinChunkLines *int `json:"minChunkLines,omitempty"`
+}
+
+// UserScanOverrides describes scan overrides for user config.
+type UserScanOverrides struct {
+	MaxTextFileSizeBytes *int64 `json:"maxTextFileSizeBytes,omitempty"`
+}
+
+// UserLimitsOverrides describes output limit overrides for user config.
+type UserLimitsOverrides struct {
+	MaxSnippetBytes *int `json:"maxSnippetBytes,omitempty"`
 }
 
 // DefaultRuntimeConfig returns a Config populated with defaults.
@@ -122,25 +139,25 @@ func LoadUserConfig(path string) (UserConfig, []byte, error) {
 func ApplyOverrides(defaults Config, user UserConfig) (Config, []string, error) {
 	profiles := sanitizeProfiles(user.Profiles)
 	if len(profiles) == 0 {
-		return Config{}, nil, fmt.Errorf("profiles are required in config.json")
+		return Config{}, nil, fmt.Errorf("profiles are required in .repodex.json")
 	}
 	cfg := defaults
-	if user.Scan != nil && user.Scan.MaxTextFileSizeBytes > 0 {
-		cfg.Scan.MaxTextFileSizeBytes = user.Scan.MaxTextFileSizeBytes
+	if user.Scan != nil && user.Scan.MaxTextFileSizeBytes != nil {
+		cfg.Scan.MaxTextFileSizeBytes = *user.Scan.MaxTextFileSizeBytes
 	}
 	if user.Chunk != nil {
-		if user.Chunk.MaxLines > 0 {
-			cfg.Chunk.MaxLines = user.Chunk.MaxLines
+		if user.Chunk.MaxLines != nil {
+			cfg.Chunk.MaxLines = *user.Chunk.MaxLines
 		}
-		if user.Chunk.OverlapLines > 0 {
-			cfg.Chunk.OverlapLines = user.Chunk.OverlapLines
+		if user.Chunk.OverlapLines != nil {
+			cfg.Chunk.OverlapLines = *user.Chunk.OverlapLines
 		}
-		if user.Chunk.MinChunkLines > 0 {
-			cfg.Chunk.MinChunkLines = user.Chunk.MinChunkLines
+		if user.Chunk.MinChunkLines != nil {
+			cfg.Chunk.MinChunkLines = *user.Chunk.MinChunkLines
 		}
 	}
-	if user.Limits != nil && user.Limits.MaxSnippetBytes > 0 {
-		cfg.Limits.MaxSnippetBytes = user.Limits.MaxSnippetBytes
+	if user.Limits != nil && user.Limits.MaxSnippetBytes != nil {
+		cfg.Limits.MaxSnippetBytes = *user.Limits.MaxSnippetBytes
 	}
 	return cfg, profiles, nil
 }

@@ -10,11 +10,11 @@ func Dir(root string) string {
 }
 
 func ConfigPath(root string) string {
-	return filepath.Join(Dir(root), "config.json")
+	return filepath.Join(root, ".repodex.json")
 }
 
 func IgnorePath(root string) string {
-	return filepath.Join(root, ".repodexignore")
+	return filepath.Join(root, ".repodex.ignore")
 }
 
 func MetaPath(root string) string {

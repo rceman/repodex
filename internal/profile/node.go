@@ -39,6 +39,5 @@ func (nodeProfile) Rules() Rules {
 			".DS_Store",
 			"**/*.map",
 		},
-		IncludeExt: []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"},
 	}
 }

@@ -51,6 +51,11 @@ func Parse(args []string) (Command, error) {
 			return Command{}, fmt.Errorf("unknown flag %s", args[1])
 		}
 		return Command{Action: "sync"}, nil
+	case "scan":
+		if len(args) > 1 {
+			return Command{}, fmt.Errorf("unknown flag %s", args[1])
+		}
+		return Command{Action: "sync"}, nil
 	case "search":
 		c := Command{Action: "search"}
 		i := 1

@@ -17,7 +17,7 @@ func TestConfigHashChangesWithIgnore(t *testing.T) {
 		t.Fatalf("apply overrides: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, ".repodexignore"), []byte("tmp/\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("tmp/\n"), 0o644); err != nil {
 		t.Fatalf("write repodexignore: %v", err)
 	}
 	rules1, err := profile.BuildEffectiveRules(root, profiles, cfg)
@@ -29,7 +29,7 @@ func TestConfigHashChangesWithIgnore(t *testing.T) {
 		t.Fatalf("hash1: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, ".repodexignore"), []byte("tmp/\n!tmp/keep.ts\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("tmp/\n!tmp/keep.ts\n"), 0o644); err != nil {
 		t.Fatalf("write repodexignore update: %v", err)
 	}
 	rules2, err := profile.BuildEffectiveRules(root, profiles, cfg)

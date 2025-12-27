@@ -29,7 +29,7 @@ func TestKnownBinaryExtFastPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rules: %v", err)
 	}
-	results, err := Walk(root, cfg, rules)
+	results, err := Walk(root, rules)
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestBinarySniffFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rules: %v", err)
 	}
-	results, err := Walk(root, cfg, rules)
+	results, err := Walk(root, rules)
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestMaxTextFileSizeGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rules: %v", err)
 	}
-	results, err := Walk(root, cfg, rules)
+	results, err := Walk(root, rules)
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
@@ -85,14 +85,14 @@ func TestIgnoreNegationRestoresInclusion(t *testing.T) {
 	}
 	cfg := newTestConfig()
 
-	if err := os.WriteFile(filepath.Join(root, ".repodexignore"), []byte("**/*.ts\n!diagram.ts\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("**/*.ts\n!diagram.ts\n"), 0o644); err != nil {
 		t.Fatalf("write repodexignore: %v", err)
 	}
 	rulesOverride, err := profile.BuildEffectiveRules(root, newTestProfiles(), cfg)
 	if err != nil {
 		t.Fatalf("rules override: %v", err)
 	}
-	results, err := Walk(root, cfg, rulesOverride)
+	results, err := Walk(root, rulesOverride)
 	if err != nil {
 		t.Fatalf("walk override: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestNestedDirIgnoreMatchesAnywhere(t *testing.T) {
 	if err := os.WriteFile(target, []byte("const a = 1"), 0o644); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".repodexignore"), []byte("node_modules/\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("node_modules/\n"), 0o644); err != nil {
 		t.Fatalf("write repodexignore: %v", err)
 	}
 	cfg := newTestConfig()
@@ -118,7 +118,7 @@ func TestNestedDirIgnoreMatchesAnywhere(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rules: %v", err)
 	}
-	results, err := Walk(root, cfg, rules)
+	results, err := Walk(root, rules)
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
@@ -137,14 +137,14 @@ func TestIgnoreOverrideOrder(t *testing.T) {
 	}
 	cfg := newTestConfig()
 
-	if err := os.WriteFile(filepath.Join(root, ".repodexignore"), []byte("**/*.ts\n!keep.ts\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("**/*.ts\n!keep.ts\n"), 0o644); err != nil {
 		t.Fatalf("write repodexignore: %v", err)
 	}
 	rules, err := profile.BuildEffectiveRules(root, newTestProfiles(), cfg)
 	if err != nil {
 		t.Fatalf("rules: %v", err)
 	}
-	results, err := Walk(root, cfg, rules)
+	results, err := Walk(root, rules)
 	if err != nil {
 		t.Fatalf("walk: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRulesHashInvalidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rules1: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".repodexignore"), []byte("tmp/\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("tmp/\n"), 0o644); err != nil {
 		t.Fatalf("write repodexignore: %v", err)
 	}
 	rules2, err := profile.BuildEffectiveRules(root, newTestProfiles(), cfg)
@@ -170,5 +170,37 @@ func TestRulesHashInvalidation(t *testing.T) {
 	}
 	if rules1.RulesHash == rules2.RulesHash {
 		t.Fatalf("expected rules hash to change after repodexignore update")
+	}
+}
+
+func TestHardExcludeRepodexAndGit(t *testing.T) {
+	root := t.TempDir()
+	paths := []string{
+		filepath.Join(root, ".repodex", "keep.ts"),
+		filepath.Join(root, ".git", "skip.ts"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("const x = 1"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".repodex.ignore"), []byte("\n"), 0o644); err != nil {
+		t.Fatalf("write repodexignore: %v", err)
+	}
+
+	cfg := newTestConfig()
+	rules, err := profile.BuildEffectiveRules(root, newTestProfiles(), cfg)
+	if err != nil {
+		t.Fatalf("rules: %v", err)
+	}
+	results, err := Walk(root, rules)
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected hard-excluded paths to be skipped, got %+v", results)
 	}
 }

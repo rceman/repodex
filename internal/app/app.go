@@ -38,13 +38,6 @@ type StatusResponse struct {
 	Dirty         bool  `json:"dirty"`
 	ChangedFiles  int   `json:"changed_files"`
 
-	// Legacy git fields (prefer GitBaseHead/GitCurrentHead/GitChanged*).
-	GitRepo       bool   `json:"git_repo,omitempty"`       // Deprecated: use GitBaseHead/GitCurrentHead.
-	RepoHead      string `json:"repo_head,omitempty"`      // Deprecated: use GitBaseHead.
-	CurrentHead   string `json:"current_head,omitempty"`   // Deprecated: use GitCurrentHead.
-	WorktreeClean bool   `json:"worktree_clean,omitempty"` // Deprecated: use GitWorktreeClean.
-	HeadMatches   bool   `json:"head_matches,omitempty"`   // Deprecated: compare GitBaseHead vs GitCurrentHead.
-
 	// Git status diagnostics (useful for reminding to commit the index). Kept for backward compatibility.
 	GitDirtyPathCount   int  `json:"git_dirty_path_count,omitempty"`
 	GitDirtyRepodexOnly bool `json:"git_dirty_repodex_only,omitempty"`
@@ -63,48 +56,57 @@ type StatusResponse struct {
 	SyncPlan            *statusx.SyncPlan `json:"sync_plan,omitempty"`
 }
 
+type legacyStatusResponse struct {
+	StatusResponse
+	GitRepo       bool   `json:"git_repo,omitempty"`
+	RepoHead      string `json:"repo_head,omitempty"`
+	CurrentHead   string `json:"current_head,omitempty"`
+	WorktreeClean bool   `json:"worktree_clean,omitempty"`
+	HeadMatches   bool   `json:"head_matches,omitempty"`
+}
+
 // Run executes the CLI app and returns an exit code.
 func Run(args []string) int {
 	cmd, err := cli.Parse(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
 	repoRoot, err := resolveRepoRoot(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
 	switch cmd.Action {
 	case "init":
 		if err := runInit(repoRoot, cmd.Force); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "status":
 		if err := runStatus(repoRoot, cmd.JSON); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "sync":
 		if err := runIndexSync(repoRoot); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "search":
 		if err := runSearch(repoRoot, cmd.Q, cmd.TopK); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
 	case "fetch":
 		if err := runFetch(repoRoot, cmd.IDs, cmd.MaxLines); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			_, _ = fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		return 0
@@ -112,13 +114,13 @@ func Run(args []string) int {
 		switch cmd.Subcommand {
 		case "sync":
 			if err := runIndexSync(repoRoot); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				_, _ = fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
 			return 0
 		case "status":
 			if err := runStatus(repoRoot, cmd.JSON); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				_, _ = fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
 			return 0
@@ -126,12 +128,12 @@ func Run(args []string) int {
 	case "serve":
 		if cmd.Stdio {
 			if err := runServeStdio(repoRoot); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				_, _ = fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
 			return 0
 		}
-		fmt.Fprintln(os.Stderr, "serve supports --stdio only")
+		_, _ = fmt.Fprintln(os.Stderr, "serve supports --stdio only")
 		return 1
 	}
 	return 1
@@ -139,15 +141,33 @@ func Run(args []string) int {
 
 func runInit(root string, force bool) error {
 	dir := store.Dir(root)
+	cfgPath := store.ConfigPath(root)
+	ignorePath := store.IgnorePath(root)
 	if !force {
-		if _, err := os.Stat(dir); err == nil {
-			return fmt.Errorf("%s already exists; rerun with --force to overwrite", dir)
-		} else if err != nil && !os.IsNotExist(err) {
+		if exists, err := fileExistsOk(dir); err != nil {
 			return err
+		} else if exists {
+			return fmt.Errorf("%s already exists; rerun with --force to overwrite", dir)
+		}
+		if exists, err := fileExistsOk(cfgPath); err != nil {
+			return err
+		} else if exists {
+			return fmt.Errorf("%s already exists; rerun with --force to overwrite", cfgPath)
+		}
+		if exists, err := fileExistsOk(ignorePath); err != nil {
+			return err
+		} else if exists {
+			return fmt.Errorf("%s already exists; rerun with --force to overwrite", ignorePath)
 		}
 	}
 	if force {
 		if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Remove(cfgPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Remove(ignorePath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -156,20 +176,20 @@ func runInit(root string, force bool) error {
 	}
 
 	defaults := config.DefaultRuntimeConfig()
+	profiles := []string{"ts_js"}
 	detected, err := profile.DetectProfiles(profile.DetectContext{Root: root})
 	if err != nil {
 		return err
 	}
-	profiles := make([]string, 0, len(detected.Profiles))
-	for _, p := range detected.Profiles {
-		profiles = append(profiles, p.ID())
-	}
-	if len(profiles) == 0 {
-		profiles = []string{"ts_js"}
+	if len(detected.Profiles) > 0 {
+		profiles = make([]string, 0, len(detected.Profiles))
+		for _, p := range detected.Profiles {
+			profiles = append(profiles, p.ID())
+		}
 	}
 
 	userCfg := config.UserConfig{Profiles: profiles}
-	if err := config.SaveUserConfig(store.ConfigPath(root), userCfg); err != nil {
+	if err := config.SaveUserConfig(cfgPath, userCfg); err != nil {
 		return err
 	}
 
@@ -183,7 +203,7 @@ func runInit(root string, force bool) error {
 			ignorePatterns = append(ignorePatterns, rules.ScanIgnore...)
 		}
 	}
-	if err := ignore.WriteIgnore(store.IgnorePath(root), ignorePatterns); err != nil {
+	if err := ignore.WriteIgnore(ignorePath, ignorePatterns); err != nil {
 		return err
 	}
 
@@ -201,6 +221,12 @@ func runInit(root string, force bool) error {
 		return err
 	}
 	meta := store.NewMeta(config.IndexVersion, 0, 0, 0, cfgHash, repoHead)
+	meta.Cache = &store.CacheMeta{
+		CacheVersion:  cachex.CacheVersion,
+		SchemaVersion: store.SchemaVersion,
+		ConfigHash:    cfgHash,
+		Profiles:      append([]string(nil), profiles...),
+	}
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
 	}
@@ -384,7 +410,7 @@ func runIndexSync(root string) error {
 		fullRebuild = true
 	}
 
-	refs, err := scan.WalkRefs(root, cfg, rules)
+	refs, err := scan.WalkRefs(root, rules)
 	if err != nil {
 		return err
 	}
@@ -431,6 +457,12 @@ func runIndexSync(root string) error {
 
 	repoHead := currentRepoHead(root)
 	meta := store.NewMeta(config.IndexVersion, len(fileEntries), len(chunkEntries), len(postings), cfgHash, repoHead)
+	meta.Cache = &store.CacheMeta{
+		CacheVersion:  cachex.CacheVersion,
+		SchemaVersion: store.SchemaVersion,
+		ConfigHash:    cfgHash,
+		Profiles:      append([]string(nil), profiles...),
+	}
 	if err := store.SaveMeta(store.MetaPath(root), meta); err != nil {
 		return err
 	}
@@ -448,18 +480,28 @@ func runStatus(root string, jsonOut bool) error {
 func outputStatus(resp StatusResponse, jsonOut bool) error {
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
-		return enc.Encode(resp)
+		return enc.Encode(legacyFromStatus(resp))
 	}
-	fmt.Printf("Indexed: %v\nDirty: %v\nChanged files: %d\n", resp.Indexed, resp.Dirty, resp.ChangedFiles)
-	if resp.GitRepo && !resp.WorktreeClean && resp.GitDirtyRepodexOnly {
-		fmt.Printf("Git: working tree dirty due to .repodex only (commit index artifacts if you rely on portable index)\n")
-	} else if resp.GitRepo && !resp.WorktreeClean {
-		fmt.Printf("Git: working tree dirty (%d paths)\n", resp.GitDirtyPathCount)
+	if _, err := fmt.Printf("Indexed: %v\nDirty: %v\nChanged files: %d\n", resp.Indexed, resp.Dirty, resp.ChangedFiles); err != nil {
+		return err
+	}
+	if !resp.GitWorktreeClean && resp.GitDirtyRepodexOnly {
+		if _, err := fmt.Printf("Git: working tree dirty due to .repodex only (commit index artifacts if you rely on portable index)\n"); err != nil {
+			return err
+		}
+	} else if !resp.GitWorktreeClean {
+		if _, err := fmt.Printf("Git: working tree dirty (%d paths)\n", resp.GitDirtyPathCount); err != nil {
+			return err
+		}
 	}
 	if resp.SyncPlan != nil {
-		fmt.Printf("Sync plan: mode=%s, why=%s\n", resp.SyncPlan.Mode, resp.SyncPlan.Why)
+		if _, err := fmt.Printf("Sync plan: mode=%s, why=%s\n", resp.SyncPlan.Mode, resp.SyncPlan.Why); err != nil {
+			return err
+		}
 		if resp.SyncPlan.Why == statusx.WhyGitChangedNonIndexable && resp.GitDirtyRepodexOnly {
-			fmt.Printf("Note: repo dirty only due to .repodex; commit index artifacts for portability.\n")
+			if _, err := fmt.Printf("Note: repo dirty only due to .repodex; commit index artifacts for portability.\n"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -609,11 +651,6 @@ func computeStatusResolved(root string) (StatusResponse, error) {
 }
 
 func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
-	resp.GitRepo = info.Repo
-	resp.RepoHead = info.BaseHead
-	resp.CurrentHead = info.CurrentHead
-	resp.WorktreeClean = info.WorktreeClean
-	resp.HeadMatches = info.Repo && info.BaseHead != "" && info.CurrentHead != "" && info.BaseHead == info.CurrentHead
 	resp.GitDirtyPathCount = info.DirtyPathCount
 	resp.GitDirtyRepodexOnly = info.DirtyRepodexOnly
 	resp.GitBaseHead = info.BaseHead
@@ -629,6 +666,19 @@ func applyGitInfo(resp *StatusResponse, info statusx.GitInfo) {
 		resp.GitChangedPaths = nil
 		resp.GitChangedPathCount = 0
 		resp.GitChangedIndexable = false
+	}
+}
+
+func legacyFromStatus(resp StatusResponse) legacyStatusResponse {
+	gitRepo := resp.GitChangedReason != ""
+	headMatches := resp.GitBaseHead != "" && resp.GitCurrentHead != "" && resp.GitBaseHead == resp.GitCurrentHead
+	return legacyStatusResponse{
+		StatusResponse: resp,
+		GitRepo:        gitRepo,
+		RepoHead:       resp.GitBaseHead,
+		CurrentHead:    resp.GitCurrentHead,
+		WorktreeClean:  resp.GitWorktreeClean,
+		HeadMatches:    headMatches,
 	}
 }
 
@@ -653,13 +703,21 @@ func combinedConfigHash(cfg config.Config, rulesHash uint64) (uint64, error) {
 
 func runServeStdio(root string) error {
 	statusFn := func() (interface{}, error) {
-		return computeStatusResolved(root)
+		resp, err := computeStatusResolved(root)
+		if err != nil {
+			return nil, err
+		}
+		return legacyFromStatus(resp), nil
 	}
 	syncFn := func() (interface{}, error) {
 		if err := runIndexSync(root); err != nil {
 			return nil, err
 		}
-		return computeStatusResolved(root)
+		resp, err := computeStatusResolved(root)
+		if err != nil {
+			return nil, err
+		}
+		return legacyFromStatus(resp), nil
 	}
 	return serve.ServeStdio(root, statusFn, syncFn)
 }

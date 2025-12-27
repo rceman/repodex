@@ -22,7 +22,7 @@ func TestGitChangeDetectionAndSyncPlan(t *testing.T) {
 	runGit(t, root, "config", "user.name", "Test User")
 
 	// Ignore repodex artifacts to keep the worktree clean after syncs.
-	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".repodex\n.repodexignore\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".repodex\n.repodex.ignore\n.repodex.json\n"), 0o644); err != nil {
 		t.Fatalf("failed to write gitignore: %v", err)
 	}
 

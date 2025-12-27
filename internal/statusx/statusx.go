@@ -146,7 +146,7 @@ func CollectGitInfo(root string, baseHead string, allowExts []string) GitInfo {
 		if len(paths) > 0 {
 			repodexOnly := true
 			for _, p := range paths {
-				if p == ".repodex" || strings.HasPrefix(p, ".repodex/") || p == ".repodexignore" {
+				if p == ".repodex" || strings.HasPrefix(p, ".repodex/") || p == ".repodex.ignore" || p == ".repodex.json" {
 					continue
 				}
 				repodexOnly = false
@@ -175,17 +175,18 @@ func CollectGitInfo(root string, baseHead string, allowExts []string) GitInfo {
 		return info
 	}
 	worktreeChanged := !info.WorktreeClean
-	switch {
-	case !headChanged && !worktreeChanged && info.ChangedPathCount == 0:
-		info.ChangedReason = GitChangedNone
-	case !headChanged && worktreeChanged:
-		info.ChangedReason = GitChangedWorktree
-	case headChanged && !worktreeChanged:
-		info.ChangedReason = GitChangedHead
-	case headChanged && worktreeChanged:
-		info.ChangedReason = GitChangedHeadAndWorktree
-	default:
-		info.ChangedReason = GitChangedUnknown
+	if headChanged {
+		if worktreeChanged {
+			info.ChangedReason = GitChangedHeadAndWorktree
+		} else {
+			info.ChangedReason = GitChangedHead
+		}
+	} else {
+		if worktreeChanged {
+			info.ChangedReason = GitChangedWorktree
+		} else {
+			info.ChangedReason = GitChangedNone
+		}
 	}
 	return info
 }
@@ -265,7 +266,7 @@ func isIndexableChangedPath(p string, allowExts []string) bool {
 		return false
 	}
 	// Never treat index artifacts as content changes.
-	if p == ".repodex" || strings.HasPrefix(p, ".repodex/") || p == ".repodexignore" {
+	if p == ".repodex" || strings.HasPrefix(p, ".repodex/") || p == ".repodex.ignore" || p == ".repodex.json" {
 		return false
 	}
 	if strings.HasSuffix(p, ".d.ts") {

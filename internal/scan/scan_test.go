@@ -51,7 +51,7 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 	}
 	cfg.Token = rules.TokenConfig
 
-	firstScan, err := scan.Walk(root, cfg, rules)
+	firstScan, err := scan.Walk(root, rules)
 	if err != nil {
 		t.Fatalf("first walk: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestIndexingIsDeterministicAcrossRuns(t *testing.T) {
 			t.Fatalf("unexpected map artifact indexed: %s", f.Path)
 		}
 	}
-	secondScan, err := scan.Walk(root, cfg, rules)
+	secondScan, err := scan.Walk(root, rules)
 	if err != nil {
 		t.Fatalf("second walk: %v", err)
 	}

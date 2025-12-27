@@ -7,6 +7,7 @@ import (
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/factory"
+	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/store"
 )
 
@@ -35,10 +36,15 @@ func (c *IndexCache) Load(root string) error {
 	if err != nil {
 		return err
 	}
-	cfg, _, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
+	cfg, profiles, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
 	if err != nil {
 		return err
 	}
+	rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
+	if err != nil {
+		return err
+	}
+	cfg = profile.ApplyRules(cfg, rules)
 	plugin, err := factory.FromProjectType(cfg.ProjectType)
 	if err != nil {
 		return err

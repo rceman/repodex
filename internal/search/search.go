@@ -9,6 +9,7 @@ import (
 	"github.com/memkit/repodex/internal/index"
 	"github.com/memkit/repodex/internal/lang"
 	"github.com/memkit/repodex/internal/lang/factory"
+	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/store"
 )
 
@@ -47,10 +48,15 @@ func Search(root string, q string, opts Options) ([]Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, _, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
+	cfg, profiles, err := config.ApplyOverrides(config.DefaultRuntimeConfig(), userCfg)
 	if err != nil {
 		return nil, err
 	}
+	rules, err := profile.BuildEffectiveRules(root, profiles, cfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg = profile.ApplyRules(cfg, rules)
 	plugin, err := factory.FromProjectType(cfg.ProjectType)
 	if err != nil {
 		return nil, err

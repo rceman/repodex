@@ -6,17 +6,26 @@ import (
 	"time"
 )
 
+// CacheMeta captures persisted cache metadata.
+type CacheMeta struct {
+	CacheVersion  string
+	SchemaVersion int
+	ConfigHash    uint64
+	Profiles      []string
+}
+
 // Meta captures persisted index metadata.
 type Meta struct {
-	IndexVersion   int    `json:"IndexVersion"`
-	IndexedAtUnix  int64  `json:"IndexedAtUnix"`
-	FileCount      int    `json:"FileCount"`
-	ChunkCount     int    `json:"ChunkCount"`
-	TermCount      int    `json:"TermCount"`
-	ConfigHash     uint64 `json:"ConfigHash"`
-	SchemaVersion  int    `json:"SchemaVersion"`
-	RepoHead       string `json:"RepoHead"`
-	RepodexVersion string `json:"RepodexVersion"`
+	IndexVersion   int        `json:"IndexVersion"`
+	IndexedAtUnix  int64      `json:"IndexedAtUnix"`
+	FileCount      int        `json:"FileCount"`
+	ChunkCount     int        `json:"ChunkCount"`
+	TermCount      int        `json:"TermCount"`
+	ConfigHash     uint64     `json:"ConfigHash"`
+	SchemaVersion  int        `json:"SchemaVersion"`
+	RepoHead       string     `json:"RepoHead"`
+	RepodexVersion string     `json:"RepodexVersion"`
+	Cache          *CacheMeta `json:"Cache,omitempty"`
 }
 
 const SchemaVersion = 2

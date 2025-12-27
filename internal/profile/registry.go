@@ -8,6 +8,7 @@ import (
 var registry = []Profile{
 	newNodeProfile(),
 	newTSJSProfile(),
+	newGoProfile(),
 }
 
 // DetectResult captures detected profiles and contextual facts.

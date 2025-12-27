@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/memkit/repodex/internal/config"
 	"github.com/memkit/repodex/internal/hash"
 	"github.com/memkit/repodex/internal/profile"
 	"github.com/memkit/repodex/internal/textutil"
@@ -23,13 +22,6 @@ type ScannedFile struct {
 	Hash64  uint64
 }
 
-// FileStat contains lightweight file attributes used for status checks.
-type FileStat struct {
-	Path  string
-	MTime int64
-	Size  int64
-}
-
 // FileRef holds file path and stat metadata without content.
 type FileRef struct {
 	RelPath string
@@ -39,8 +31,8 @@ type FileRef struct {
 }
 
 // Walk collects all matching files according to effective rules.
-func Walk(root string, cfg config.Config, rules profile.EffectiveRules) ([]ScannedFile, error) {
-	candidates, err := collect(root, cfg, rules)
+func Walk(root string, rules profile.EffectiveRules) ([]ScannedFile, error) {
+	candidates, err := collect(root, rules)
 	if err != nil {
 		return nil, err
 	}
@@ -65,27 +57,9 @@ func Walk(root string, cfg config.Config, rules profile.EffectiveRules) ([]Scann
 	return files, nil
 }
 
-// WalkMeta collects only path, mtime, and size for matching files.
-func WalkMeta(root string, cfg config.Config, rules profile.EffectiveRules) ([]FileStat, error) {
-	candidates, err := collect(root, cfg, rules)
-	if err != nil {
-		return nil, err
-	}
-
-	files := make([]FileStat, 0, len(candidates))
-	for _, cand := range candidates {
-		files = append(files, FileStat{
-			Path:  cand.relPath,
-			MTime: cand.info.ModTime().Unix(),
-			Size:  cand.info.Size(),
-		})
-	}
-	return files, nil
-}
-
 // WalkRefs enumerates indexable files with stat metadata without reading content.
-func WalkRefs(root string, cfg config.Config, rules profile.EffectiveRules) ([]FileRef, error) {
-	candidates, err := collect(root, cfg, rules)
+func WalkRefs(root string, rules profile.EffectiveRules) ([]FileRef, error) {
+	candidates, err := collect(root, rules)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +82,7 @@ type candidate struct {
 	info    fs.FileInfo
 }
 
-func collect(root string, cfg config.Config, rules profile.EffectiveRules) ([]candidate, error) {
+func collect(root string, rules profile.EffectiveRules) ([]candidate, error) {
 	matcher := newIgnoreMatcher(rules.ScanIgnore)
 	var candidates []candidate
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -122,6 +96,13 @@ func collect(root string, cfg config.Config, rules profile.EffectiveRules) ([]ca
 		}
 		rel = filepath.ToSlash(rel)
 		if rel == "." {
+			return nil
+		}
+
+		if isHardExcluded(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -178,6 +159,16 @@ func collect(root string, cfg config.Config, rules profile.EffectiveRules) ([]ca
 		return candidates[i].relPath < candidates[j].relPath
 	})
 	return candidates, nil
+}
+
+func isHardExcluded(rel string) bool {
+	if rel == ".repodex" || strings.HasPrefix(rel, ".repodex/") {
+		return true
+	}
+	if rel == ".git" || strings.HasPrefix(rel, ".git/") {
+		return true
+	}
+	return false
 }
 
 func matchesExt(lowerPath string, exts []string) bool {

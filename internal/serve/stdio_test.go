@@ -490,7 +490,7 @@ func buildTestIndex(t *testing.T, root string) {
 		t.Fatalf("plugin: %v", err)
 	}
 
-	files, err := scan.Walk(root, cfg, rules)
+	files, err := scan.Walk(root, rules)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
